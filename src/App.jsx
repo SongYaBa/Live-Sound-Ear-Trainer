@@ -162,21 +162,23 @@ function Segmented({options,value,onChange}) {
 function useMaster(masterVol, muted) {
   const ctxRef = useRef(null);
   const masterRef = useRef(null);
-  const getCtx = () => {
+  const ensure = () => {
     if(!ctxRef.current||ctxRef.current.state==="closed"){
       const c = new (window.AudioContext||window.webkitAudioContext)();
       const g = c.createGain();
+      g.gain.value = muted ? 0 : masterVol;
       g.connect(c.destination);
       ctxRef.current = c; masterRef.current = g;
     }
-    return ctxRef.current;
+    return { ctx: ctxRef.current, master: masterRef.current };
   };
+  const getCtx = () => ensure().ctx;
+  const getMaster = () => ensure().master;
   useEffect(()=>{
     if(masterRef.current){
       masterRef.current.gain.value = muted ? 0 : masterVol;
     }
   },[masterVol,muted]);
-  const getMaster = () => masterRef.current;
   return { getCtx, getMaster, masterVol, muted };
 }
 
@@ -193,12 +195,28 @@ function SineTab({addScore, audio}) {
 
   const freqs = octMode==="oct"?SINE_OCT:SINE_THIRD;
 
-  const stop=()=>{ try{oscRef.current?.stop();}catch(e){} setPlaying(false); };
+  const stop=()=>{ try{oscRef.current?.stop();}catch(e){} oscRef.current=null; setPlaying(false); };
 
-  const play=(freq,dur=2.5)=>{
+  // 무한 재생 (문제 재생용). 다시 부르면 토글 정지.
+  const playLoop=async(freq)=>{
+    if(playing){ stop(); return; }
+    const ctx=audio.getCtx();
+    if(ctx.state==="suspended") await ctx.resume();
+    const osc=ctx.createOscillator();
+    const g=ctx.createGain();
+    osc.type="sine"; osc.frequency.value=freq;
+    g.gain.setValueAtTime(0,ctx.currentTime);
+    g.gain.linearRampToValueAtTime(0.25,ctx.currentTime+0.05);
+    osc.connect(g); g.connect(audio.getMaster());
+    osc.start();
+    oscRef.current=osc; setPlaying(true);
+  };
+
+  // 짧은 미리듣기 (보기 클릭용). 누르면 기존 재생 정지 후 잠깐 들려줌.
+  const preview=async(freq,dur=1.5)=>{
     stop();
     const ctx=audio.getCtx();
-    if(ctx.state==="suspended") ctx.resume();
+    if(ctx.state==="suspended") await ctx.resume();
     const osc=ctx.createOscillator();
     const g=ctx.createGain();
     osc.type="sine"; osc.frequency.value=freq;
@@ -207,18 +225,17 @@ function SineTab({addScore, audio}) {
     g.gain.linearRampToValueAtTime(0,ctx.currentTime+dur-0.05);
     osc.connect(g); g.connect(audio.getMaster());
     osc.start(); osc.stop(ctx.currentTime+dur);
-    oscRef.current=osc; setPlaying(true);
-    setTimeout(()=>setPlaying(false),dur*1000);
+    oscRef.current=osc;
   };
 
   const newQ=()=>{
+    stop();
     setTarget(freqs[Math.floor(Math.random()*freqs.length)]);
-    setGuess(null); setResult(null); stop();
+    setGuess(null); setResult(null);
   };
 
   const submit=()=>{
     if(!guess||!target) return;
-    // 1/3옥타브는 더 촘촘하므로 정답 허용범위를 좁게
     const tol = octMode==="oct"?0.42:0.18;
     const ok=Math.abs(Math.log2(guess/target))<tol;
     setResult({ok,target,guess});
@@ -236,19 +253,18 @@ function SineTab({addScore, audio}) {
         <Segmented
           options={[{value:"oct",label:"1옥타브 (10)"},{value:"third",label:"1/3옥타브 (31)"}]}
           value={octMode} onChange={setOctMode}/>
-        <Btn accent onClick={()=>target&&play(target)} disabled={playing} style={{marginTop:4}}>
-          {playing?"▶ 재생 중...":"▶ 문제 재생"}
+        <Btn accent onClick={()=>target&&playLoop(target)} style={{marginTop:4}}>
+          {playing?"■ 재생 정지":"▶ 문제 재생"}
         </Btn>
-        <Btn onClick={()=>target&&play(target,1)} disabled={playing}>짧게 재생 (1초)</Btn>
       </div>
 
       <div style={S.card}>
-        <div style={S.label}>주파수 선택 (클릭 시 재생)</div>
+        <div style={S.label}>주파수 선택 (클릭 시 미리듣기)</div>
         <div style={{display:"grid",gridTemplateColumns:octMode==="oct"?"1fr 1fr":"1fr 1fr 1fr",gap:6}}>
           {freqs.map(f=>{
             const sel=guess===f;
             return (
-              <button key={f} onClick={()=>{setGuess(f);play(f,1.5);}} style={{
+              <button key={f} onClick={()=>{setGuess(f);preview(f);setPlaying(false);}} style={{
                 padding:octMode==="oct"?"14px 8px":"10px 4px", borderRadius:8, fontFamily:"inherit",
                 fontSize:octMode==="oct"?14:11, fontWeight:sel?"bold":"normal",
                 background:sel?AC_DIM:"rgba(255,255,255,0.04)",
@@ -278,28 +294,29 @@ function SineTab({addScore, audio}) {
 // 공통 EQ 로직 (핑크노이즈 / 음원 둘 다 사용)
 // ════════════════════════════════════════════════════════════════
 const DIFFICULTY = {
-  easy:   { label:"Easy",  gainAbs:12, q:3,   fixedQ:true },
-  normal: { label:"Normal",gainAbs:6,  q:3,   fixedQ:true },
-  hard:   { label:"Hard",  gainAbs:3,  q:3,   fixedQ:true },
-  extra:  { label:"X-Hard",gainAbs:0,  q:0,   fixedQ:false }, // 랜덤
+  easy:   { label:"Easy",  gainAbs:12 },
+  normal: { label:"Normal",gainAbs:6  },
+  hard:   { label:"Hard",  gainAbs:3  },
+  extra:  { label:"X-Hard",gainAbs:0  }, // 랜덤
 };
+// 난이도별 정답 게인 후보 (사용자가 슬라이더로 입력해야 할 값)
+function snapGains(diffKey){
+  if(diffKey==="easy") return [12];
+  if(diffKey==="normal") return [6];
+  if(diffKey==="hard") return [3];
+  return [3,6,9,12]; // extra
+}
 
 function makeEqQuestion(freqs, diffKey, mode, userQ) {
   // mode: "boost" | "cut" | "all"
   const n = Math.floor(Math.random()*2)+1; // 1~2밴드
   const bands=[]; const used=new Set();
-  const d = DIFFICULTY[diffKey];
+  const gains = snapGains(diffKey);
   for(let i=0;i<n;i++){
     let idx; do{idx=Math.floor(Math.random()*freqs.length);}while(used.has(idx));
     used.add(idx);
-    let gainAbs, q;
-    if(diffKey==="extra"){
-      gainAbs = [3,6,9,12][Math.floor(Math.random()*4)];
-      q = [1,2,3,5,8][Math.floor(Math.random()*5)];
-    } else {
-      gainAbs = d.gainAbs;
-      q = userQ; // 사용자가 정한 Q (기본 3)
-    }
+    const gainAbs = gains[Math.floor(Math.random()*gains.length)];
+    const q = diffKey==="extra" ? [1,2,3,5,8][Math.floor(Math.random()*5)] : userQ;
     let sign;
     if(mode==="boost") sign=1;
     else if(mode==="cut") sign=-1;
@@ -311,13 +328,32 @@ function makeEqQuestion(freqs, diffKey, mode, userQ) {
 
 // ════════════════════════════════════════════════════════════════
 // EQ 슬라이더 그룹 (밴드 수에 따라 3줄 분할)
+// snapVal: 난이도별 게인 절댓값 (easy12/normal6/hard3), extra는 null
+// mode: boost/cut/all → 슬라이더 클릭 시 자동으로 채워줄 부호 결정
 // ════════════════════════════════════════════════════════════════
-function EqSliders({userBands, setUserBands, rows=1}) {
+function EqSliders({userBands, setUserBands, rows=1, snapVal, mode}) {
   const fLabel=f=>f>=1000?`${f/1000}k`:`${f}`;
-  // 행 분할
   const perRow = Math.ceil(userBands.length/rows);
   const chunks=[];
   for(let i=0;i<userBands.length;i+=perRow) chunks.push(userBands.slice(i,i+perRow));
+
+  // 밴드 클릭(탭) 시 난이도 값으로 자동 설정. all이면 +/- 토글.
+  const handleTap=(gi,cur)=>{
+    if(snapVal==null) return; // extra는 수동
+    setUserBands(prev=>prev.map((x,j)=>{
+      if(j!==gi) return x;
+      let next;
+      if(mode==="boost") next = (cur===snapVal?0:snapVal);
+      else if(mode==="cut") next = (cur===-snapVal?0:-snapVal);
+      else { // all: 0 → +snap → -snap → 0 순환
+        if(cur===0) next=snapVal;
+        else if(cur===snapVal) next=-snapVal;
+        else next=0;
+      }
+      return {...x,gain:next};
+    }));
+  };
+
   return (
     <>
       {chunks.map((chunk,ci)=>(
@@ -325,11 +361,13 @@ function EqSliders({userBands, setUserBands, rows=1}) {
           {chunk.map((b)=>{
             const gi=userBands.indexOf(b);
             return (
-              <div key={b.freq} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,flex:1,minWidth:0}}>
+              <div key={b.freq} onClick={()=>handleTap(gi,b.gain)}
+                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,flex:1,minWidth:0,cursor:snapVal!=null?"pointer":"default"}}>
                 <div style={{fontSize:8,color:b.gain>0?AC:b.gain<0?"#f66":"#554",minWidth:20,textAlign:"center"}}>
                   {b.gain>0?`+${b.gain}`:b.gain}
                 </div>
-                <input type="range" min={-18} max={18} step={1} value={b.gain}
+                <input type="range" min={-12} max={12} step={1} value={b.gain}
+                  onClick={e=>e.stopPropagation()}
                   onChange={e=>setUserBands(prev=>prev.map((x,j)=>j===gi?{...x,gain:+e.target.value}:x))}
                   style={{writingMode:"vertical-lr",direction:"rtl",height:90,accentColor:AC,cursor:"pointer",width:14}} />
                 <div style={{fontSize:7,color:"#665"}}>{fLabel(b.freq)}</div>
@@ -338,13 +376,17 @@ function EqSliders({userBands, setUserBands, rows=1}) {
           })}
         </div>
       ))}
+      {snapVal!=null&&(
+        <div style={{fontSize:9,color:"#665",textAlign:"center",marginTop:2}}>
+          {mode==="all"?`밴드 탭: 0 → +${snapVal} → -${snapVal} 순환`:`밴드 탭: ${mode==="cut"?"-":"+"}${snapVal}dB 자동 / 슬라이더로 미세조정`}
+        </div>
+      )}
     </>
   );
 }
 
-// 옵션 패널 (밴드/모드/난이도/Q) — 공통
+// 옵션 패널 (밴드/모드/난이도/Q) — 공통. Q는 항상 조절 가능.
 function EqOptions({bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}) {
-  const qLocked = DIFFICULTY[diff].fixedQ; // easy/normal/hard는 Q 고정
   return (
     <div style={S.card}>
       <div style={S.label}>밴드</div>
@@ -353,12 +395,10 @@ function EqOptions({bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}) 
       <Segmented options={[{value:"boost",label:"부스트"},{value:"cut",label:"컷"},{value:"all",label:"All"}]} value={mode} onChange={setMode}/>
       <div style={S.label}>난이도</div>
       <Segmented options={[{value:"easy",label:"Easy"},{value:"normal",label:"Normal"},{value:"hard",label:"Hard"},{value:"extra",label:"X-Hard"}]} value={diff} onChange={setDiff}/>
-      <div style={{...S.label,marginTop:8}}>
-        Q 팩터: <span style={{color:qLocked?"#554":AC}}>{qLocked?"(난이도 고정)":qVal.toFixed(1)}</span>
-      </div>
-      <input type="range" min={0.5} max={10} step={0.1} value={qVal} disabled={qLocked}
+      <div style={{...S.label,marginTop:8}}>Q 팩터: <span style={{color:AC}}>{qVal.toFixed(1)}</span></div>
+      <input type="range" min={0.5} max={10} step={0.1} value={qVal}
         onChange={e=>setQVal(+e.target.value)}
-        style={{width:"100%",accentColor:AC,cursor:qLocked?"not-allowed":"pointer",opacity:qLocked?0.3:1}} />
+        style={{width:"100%",accentColor:AC,cursor:"pointer"}} />
     </div>
   );
 }
@@ -381,10 +421,10 @@ function PinkNoiseTab({addScore, audio}) {
 
   const stopAudio=()=>{try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);};
 
-  const playNoise=(bands)=>{
+  const playNoise=async(bands)=>{
     stopAudio();
     const ctx=audio.getCtx();
-    if(ctx.state==="suspended") ctx.resume();
+    if(ctx.state==="suspended") await ctx.resume();
     const buf=createPinkNoiseBuffer(ctx);
     const src=ctx.createBufferSource();
     src.buffer=buf; src.loop=true;
@@ -449,7 +489,7 @@ function PinkNoiseTab({addScore, audio}) {
 
           <div style={S.card}>
             <div style={S.label}>EQ 설정 ({bandSet}밴드)</div>
-            <EqSliders userBands={userBands} setUserBands={setUserBands} rows={bandSet===31?3:1}/>
+            <EqSliders userBands={userBands} setUserBands={setUserBands} rows={bandSet===31?3:1} snapVal={diff==="extra"?null:DIFFICULTY[diff].gainAbs} mode={mode}/>
             <EQCanvas bands={userBands} height={80}/>
           </div>
 
@@ -489,11 +529,11 @@ function MusicEQTab({addScore, audio, sharedFile}) {
 
   const stopAudio=()=>{try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);};
 
-  const playAudio=(bands)=>{
+  const playAudio=async(bands)=>{
     stopAudio();
     if(!file||!file.buffer) return;
     const ctx=audio.getCtx();
-    if(ctx.state==="suspended") ctx.resume();
+    if(ctx.state==="suspended") await ctx.resume();
     const src=ctx.createBufferSource();
     src.buffer=file.buffer; src.loop=true;
     let prev=src;
@@ -559,7 +599,7 @@ function MusicEQTab({addScore, audio, sharedFile}) {
 
           <div style={S.card}>
             <div style={S.label}>EQ 설정 ({bandSet}밴드)</div>
-            <EqSliders userBands={userBands} setUserBands={setUserBands} rows={bandSet===31?3:1}/>
+            <EqSliders userBands={userBands} setUserBands={setUserBands} rows={bandSet===31?3:1} snapVal={diff==="extra"?null:DIFFICULTY[diff].gainAbs} mode={mode}/>
             <EQCanvas bands={userBands} height={80}/>
           </div>
 
@@ -608,11 +648,11 @@ function EffectsTab({addScore, audio, sharedFile}) {
     return curve;
   };
 
-  const playWithEffect=(effectName)=>{
+  const playWithEffect=async(effectName)=>{
     stopAudio();
     if(!file||!file.buffer) return;
     const ctx=audio.getCtx();
-    if(ctx.state==="suspended") ctx.resume();
+    if(ctx.state==="suspended") await ctx.resume();
     const src=ctx.createBufferSource();
     src.buffer=file.buffer; src.loop=true;
     const dest=audio.getMaster();
