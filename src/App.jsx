@@ -401,14 +401,11 @@ function MusicEQTab({addScore}) {
 
   const playAudio=async(bands)=>{
     stopAudio();
-    if(!file) return;
+    if(!file||!file.buffer) return;
     const ctx=getCtx();
-    if(ctx.state==="suspended") ctx.resume();
-    const resp=await fetch(file.url);
-    const ab=await resp.arrayBuffer();
-    const audioBuf=await ctx.decodeAudioData(ab);
+    if(ctx.state==="suspended") await ctx.resume();
     const src=ctx.createBufferSource();
-    src.buffer=audioBuf; src.loop=true;
+    src.buffer=file.buffer; src.loop=true;
     let prev=src;
     bands.forEach(({freq,gain,q=1.4})=>{
       if(gain===0) return;
@@ -461,18 +458,34 @@ function MusicEQTab({addScore}) {
           background:"rgba(0,255,180,0.06)",border:"1px dashed rgba(0,255,180,0.3)",
           borderRadius:8,cursor:"pointer",fontSize:13,marginBottom:8,
         }}>
-          📁 음원 파일 업로드 (MP3 / WAV)
-          <input type="file" accept="audio/*"
-            onChange={e=>{
+          📁 음원 파일 업로드 (MP3 / WAV / M4A)
+          <input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+            onChange={async e=>{
               const f=e.target.files[0];
-              if(f) setFile({name:f.name,url:URL.createObjectURL(f)});
+              if(!f) return;
+              setFile({name:f.name,buffer:null,loading:true});
+              try{
+                const ab=await f.arrayBuffer();
+                const ctx=getCtx();
+                if(ctx.state==="suspended") await ctx.resume();
+                const buffer=await ctx.decodeAudioData(ab);
+                setFile({name:f.name,buffer,loading:false});
+              }catch(err){
+                setFile({name:f.name,buffer:null,loading:false,error:true});
+              }
             }}
             style={{display:"none"}} />
         </label>
-        {file&&(
+        {file&&file.loading&&(
+          <div style={{fontSize:12,color:"#cc9",marginBottom:8}}>⏳ 불러오는 중...</div>
+        )}
+        {file&&file.error&&(
+          <div style={{fontSize:12,color:"#ff6666",marginBottom:8}}>✗ 이 파일은 재생할 수 없음. 다른 음원(MP3/WAV)을 써보세요.</div>
+        )}
+        {file&&file.buffer&&(
           <div style={{fontSize:12,color:"#00ffb4",marginBottom:8}}>✓ {file.name}</div>
         )}
-        {file&&(
+        {file&&file.buffer&&(
           <Btn accent onClick={newQ}>문제 생성</Btn>
         )}
         {!file&&(
@@ -535,67 +548,187 @@ function MusicEQTab({addScore}) {
 // ════════════════════════════════════════════════════════════════
 // ④ 이펙터 퀴즈
 // ════════════════════════════════════════════════════════════════
+// ─── 청음용 이펙터 정의 (실제 소리로 구현 가능한 것만) ──────────────
+const SOUND_EFFECTS = [
+  { name: "리버브 (Reverb)", category: "공간계" },
+  { name: "딜레이 (Delay)", category: "시간계" },
+  { name: "디스토션 (Distortion)", category: "하모닉" },
+  { name: "코러스 (Chorus)", category: "공간계" },
+  { name: "플랜저 (Flanger)", category: "시간계" },
+  { name: "트레몰로 (Tremolo)", category: "시간계" },
+  { name: "로우패스 필터 (LPF)", category: "필터" },
+  { name: "하이패스 필터 (HPF)", category: "필터" },
+];
+
 function EffectsTab({addScore}) {
-  const [cat,setCat]=useState("전체");
-  const [q,setQ]=useState(null);
+  const [file,setFile]=useState(null);
+  const [q,setQ]=useState(null);          // 정답 이펙터
   const [choices,setChoices]=useState([]);
   const [selected,setSelected]=useState(null);
-  const [hint,setHint]=useState(false);
+  const [playing,setPlaying]=useState(false);
+  const ctxRef=useRef(null);
+  const srcRef=useRef(null);
 
-  const pool=cat==="전체"?EFFECTS_DATA:EFFECTS_DATA.filter(e=>e.category===cat);
+  const getCtx=()=>{
+    if(!ctxRef.current||ctxRef.current.state==="closed")
+      ctxRef.current=new(window.AudioContext||window.webkitAudioContext)();
+    return ctxRef.current;
+  };
+  const stopAudio=()=>{try{srcRef.current?.stop();}catch(e){}setPlaying(false);};
 
-  const newQ=useCallback(()=>{
-    if(pool.length<4) return;
-    const item=pool[Math.floor(Math.random()*pool.length)];
-    const wrong=EFFECTS_DATA.filter(e=>e.name!==item.name).sort(()=>Math.random()-0.5).slice(0,3);
+  // 임펄스(리버브용) 생성
+  const makeImpulse=(ctx,dur=2.2,decay=2.5)=>{
+    const rate=ctx.sampleRate, len=rate*dur;
+    const imp=ctx.createBuffer(2,len,rate);
+    for(let ch=0;ch<2;ch++){
+      const d=imp.getChannelData(ch);
+      for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay);
+    }
+    return imp;
+  };
+
+  // 디스토션 커브
+  const makeDistortionCurve=(amount=400)=>{
+    const n=44100, curve=new Float32Array(n), deg=Math.PI/180;
+    for(let i=0;i<n;i++){
+      const x=i*2/n-1;
+      curve[i]=(3+amount)*x*20*deg/(Math.PI+amount*Math.abs(x));
+    }
+    return curve;
+  };
+
+  // 이펙터 체인 빌드 후 재생
+  const playWithEffect=async(effectName)=>{
+    stopAudio();
+    if(!file||!file.buffer) return;
+    const ctx=getCtx();
+    if(ctx.state==="suspended") await ctx.resume();
+    const src=ctx.createBufferSource();
+    src.buffer=file.buffer; src.loop=true;
+
+    const out=ctx.createGain(); out.gain.value=0.8;
+    let last=src;
+
+    if(effectName===null){
+      // 원본
+    } else if(effectName==="리버브 (Reverb)"){
+      const conv=ctx.createConvolver(); conv.buffer=makeImpulse(ctx);
+      const wet=ctx.createGain(); wet.gain.value=0.9;
+      const dry=ctx.createGain(); dry.gain.value=0.6;
+      src.connect(dry); dry.connect(out);
+      src.connect(conv); conv.connect(wet); wet.connect(out);
+      last=null;
+    } else if(effectName==="딜레이 (Delay)"){
+      const dl=ctx.createDelay(); dl.delayTime.value=0.32;
+      const fb=ctx.createGain(); fb.gain.value=0.45;
+      const wet=ctx.createGain(); wet.gain.value=0.7;
+      src.connect(out);
+      src.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(out);
+      last=null;
+    } else if(effectName==="디스토션 (Distortion)"){
+      const ws=ctx.createWaveShaper(); ws.curve=makeDistortionCurve(400); ws.oversample="4x";
+      const lvl=ctx.createGain(); lvl.gain.value=0.4;
+      src.connect(ws); ws.connect(lvl); last=lvl;
+    } else if(effectName==="코러스 (Chorus)"){
+      const dl=ctx.createDelay(); dl.delayTime.value=0.03;
+      const lfo=ctx.createOscillator(); lfo.frequency.value=1.2;
+      const lg=ctx.createGain(); lg.gain.value=0.003;
+      lfo.connect(lg); lg.connect(dl.delayTime); lfo.start();
+      const wet=ctx.createGain(); wet.gain.value=0.6;
+      src.connect(out); src.connect(dl); dl.connect(wet); wet.connect(out);
+      last=null;
+    } else if(effectName==="플랜저 (Flanger)"){
+      const dl=ctx.createDelay(); dl.delayTime.value=0.005;
+      const lfo=ctx.createOscillator(); lfo.frequency.value=0.4;
+      const lg=ctx.createGain(); lg.gain.value=0.004;
+      lfo.connect(lg); lg.connect(dl.delayTime); lfo.start();
+      const fb=ctx.createGain(); fb.gain.value=0.7;
+      const wet=ctx.createGain(); wet.gain.value=0.7;
+      src.connect(out); src.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(out);
+      last=null;
+    } else if(effectName==="트레몰로 (Tremolo)"){
+      const tg=ctx.createGain();
+      const lfo=ctx.createOscillator(); lfo.frequency.value=6;
+      const lg=ctx.createGain(); lg.gain.value=0.5;
+      lfo.connect(lg); lg.connect(tg.gain); lfo.start();
+      src.connect(tg); last=tg;
+    } else if(effectName==="로우패스 필터 (LPF)"){
+      const f=ctx.createBiquadFilter(); f.type="lowpass"; f.frequency.value=600; f.Q.value=1;
+      src.connect(f); last=f;
+    } else if(effectName==="하이패스 필터 (HPF)"){
+      const f=ctx.createBiquadFilter(); f.type="highpass"; f.frequency.value=2500; f.Q.value=1;
+      src.connect(f); last=f;
+    }
+
+    if(last) last.connect(out);
+    out.connect(ctx.destination);
+    src.start(); srcRef.current=src; setPlaying(true);
+  };
+
+  const newQ=()=>{
+    const item=SOUND_EFFECTS[Math.floor(Math.random()*SOUND_EFFECTS.length)];
+    const wrong=SOUND_EFFECTS.filter(e=>e.name!==item.name).sort(()=>Math.random()-0.5).slice(0,3);
     setChoices([item,...wrong].sort(()=>Math.random()-0.5));
-    setQ(item); setSelected(null); setHint(false);
-  },[cat,pool.length]);
-
-  useEffect(()=>{newQ();},[cat]);
+    setQ(item); setSelected(null); stopAudio();
+  };
 
   const select=(c)=>{
     if(selected) return;
     setSelected(c);
     addScore(c.name===q.name);
+    stopAudio();
   };
 
   return (
     <div style={{padding:16}}>
-      {/* 카테고리 필터 */}
-      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:12}}>
-        {CATEGORIES.map(c=>(
-          <button key={c} onClick={()=>setCat(c)} style={{
-            padding:"6px 12px",fontSize:11,fontFamily:"inherit",borderRadius:20,
-            background:cat===c?"rgba(0,255,180,0.15)":"rgba(255,255,255,0.04)",
-            border:cat===c?"1px solid #00ffb4":"1px solid rgba(255,255,255,0.08)",
-            color:cat===c?"#00ffb4":"#556",cursor:"pointer",
-          }}>{c}</button>
-        ))}
+      {/* 파일 업로드 */}
+      <div style={S.card}>
+        <div style={S.label}>④ 이펙터 청음 맞추기</div>
+        <div style={{fontSize:12,color:"#556",marginBottom:12}}>
+          음원에 걸린 이펙터를 듣고 맞추세요. 원본과 비교하며 들어보세요.
+        </div>
+        <label style={{
+          display:"block",padding:"16px",textAlign:"center",
+          background:"rgba(0,255,180,0.06)",border:"1px dashed rgba(0,255,180,0.3)",
+          borderRadius:8,cursor:"pointer",fontSize:13,marginBottom:8,
+        }}>
+          📁 음원 파일 업로드 (MP3 / WAV / M4A)
+          <input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+            onChange={async e=>{
+              const f=e.target.files[0];
+              if(!f) return;
+              setFile({name:f.name,buffer:null,loading:true});
+              try{
+                const ab=await f.arrayBuffer();
+                const ctx=getCtx();
+                if(ctx.state==="suspended") await ctx.resume();
+                const buffer=await ctx.decodeAudioData(ab);
+                setFile({name:f.name,buffer,loading:false});
+              }catch(err){
+                setFile({name:f.name,buffer:null,loading:false,error:true});
+              }
+            }}
+            style={{display:"none"}} />
+        </label>
+        {file&&file.loading&&<div style={{fontSize:12,color:"#cc9",marginBottom:8}}>⏳ 불러오는 중...</div>}
+        {file&&file.error&&<div style={{fontSize:12,color:"#ff6666",marginBottom:8}}>✗ 이 파일은 재생할 수 없음. 다른 음원(MP3/WAV)을 써보세요.</div>}
+        {file&&file.buffer&&<div style={{fontSize:12,color:"#00ffb4",marginBottom:8}}>✓ {file.name}</div>}
+        {file&&file.buffer&&<Btn accent onClick={newQ}>문제 생성</Btn>}
+        {!file&&<div style={{fontSize:11,color:"#334"}}>저작권 없는 음원을 사용하세요</div>}
       </div>
 
       {q&&(
         <>
           <div style={S.card}>
-            <div style={S.label}>④ 이펙터 이름 맞추기</div>
-            <div style={{fontSize:15,lineHeight:1.7,color:"#dde4ee",marginBottom:12}}>
-              {q.desc}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <Btn accent onClick={()=>playWithEffect(q.name)} disabled={playing}>▶ 이펙터 소리</Btn>
+              <Btn onClick={()=>playWithEffect(null)} disabled={playing}>▶ 원본</Btn>
             </div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div style={{fontSize:11,color:"#445"}}>
-                카테고리: <span style={{color:"#667"}}>{q.category}</span>
-              </div>
-              {!hint?(
-                <button onClick={()=>setHint(true)} style={{
-                  fontSize:11,background:"none",border:"1px solid #334",
-                  borderRadius:4,color:"#445",padding:"3px 10px",cursor:"pointer",fontFamily:"inherit",
-                }}>힌트</button>
-              ):(
-                <div style={{fontSize:11,color:"#cc9",padding:"3px 10px"}}>💡 {q.hint}</div>
-              )}
-            </div>
+            <Btn onClick={stopAudio} disabled={!playing}>■ 정지</Btn>
+            {playing&&<div style={{fontSize:11,color:"#00ffb4"}}>◉ 재생 중</div>}
           </div>
 
+          <div style={{fontSize:12,color:"#556",margin:"4px 2px 10px"}}>지금 걸린 이펙터는?</div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
             {choices.map(c=>{
               const isCorrect=c.name===q.name;
@@ -623,13 +756,13 @@ function EffectsTab({addScore}) {
               {selected.name===q.name?"✓ 정답!":"✗ 오답. 정답: "+q.name}
             </div>
           )}
-
           {selected&&<Btn accent onClick={newQ}>다음 문제 →</Btn>}
         </>
       )}
     </div>
   );
 }
+
 
 // ════════════════════════════════════════════════════════════════
 // 메인 앱
