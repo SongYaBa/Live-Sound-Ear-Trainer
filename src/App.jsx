@@ -24,7 +24,12 @@ const EQ_31 = [20,25,31,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000
   1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
 
 // ─── 사인파 주파수 ───────────────────────────────────────────────
-const SINE_FREQS = [31.5,63,125,250,500,1000,2000,4000,8000,16000];
+// 1옥타브 간격 (10개)
+const SINE_OCT = [31.5,63,125,250,500,1000,2000,4000,8000,16000];
+// 1/3옥타브 간격 (31개) ISO
+const SINE_THIRD = [20,25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,
+  1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
+const fmtFreq=f=>f>=1000?`${(f/1000).toString().replace(/\.0$/,"")}kHz`:`${f}Hz`;
 
 // ─── 핑크노이즈 생성 ─────────────────────────────────────────────
 function createPinkNoiseBuffer(ctx) {
@@ -179,11 +184,14 @@ function useMaster(masterVol, muted) {
 // ① 사인파
 // ════════════════════════════════════════════════════════════════
 function SineTab({addScore, audio}) {
+  const [octMode,setOctMode]=useState("oct"); // oct=1옥타브 third=1/3옥타브
   const [target,setTarget]=useState(null);
   const [guess,setGuess]=useState(null);
   const [result,setResult]=useState(null);
   const [playing,setPlaying]=useState(false);
   const oscRef=useRef(null);
+
+  const freqs = octMode==="oct"?SINE_OCT:SINE_THIRD;
 
   const stop=()=>{ try{oscRef.current?.stop();}catch(e){} setPlaying(false); };
 
@@ -204,25 +212,31 @@ function SineTab({addScore, audio}) {
   };
 
   const newQ=()=>{
-    setTarget(SINE_FREQS[Math.floor(Math.random()*SINE_FREQS.length)]);
+    setTarget(freqs[Math.floor(Math.random()*freqs.length)]);
     setGuess(null); setResult(null); stop();
   };
 
   const submit=()=>{
     if(!guess||!target) return;
-    const ok=Math.abs(Math.log2(guess/target))<0.42;
+    // 1/3옥타브는 더 촘촘하므로 정답 허용범위를 좁게
+    const tol = octMode==="oct"?0.42:0.18;
+    const ok=Math.abs(Math.log2(guess/target))<tol;
     setResult({ok,target,guess});
     addScore(ok);
   };
 
-  useEffect(()=>{newQ(); return stop;},[]);
+  useEffect(()=>{ return stop; },[]);
+  useEffect(()=>{ newQ(); },[octMode]);
 
   return (
     <div style={{padding:16}}>
       <div style={S.card}>
         <div style={S.label}>① 사인파 주파수 맞추기</div>
-        <div style={{fontSize:12,color:"#776",marginBottom:12}}>재생 후 어떤 주파수인지 선택하세요</div>
-        <Btn accent onClick={()=>target&&play(target)} disabled={playing}>
+        <div style={{fontSize:12,color:"#776",marginBottom:10}}>옥타브 간격 선택 후 재생, 주파수를 맞추세요</div>
+        <Segmented
+          options={[{value:"oct",label:"1옥타브 (10)"},{value:"third",label:"1/3옥타브 (31)"}]}
+          value={octMode} onChange={setOctMode}/>
+        <Btn accent onClick={()=>target&&play(target)} disabled={playing} style={{marginTop:4}}>
           {playing?"▶ 재생 중...":"▶ 문제 재생"}
         </Btn>
         <Btn onClick={()=>target&&play(target,1)} disabled={playing}>짧게 재생 (1초)</Btn>
@@ -230,18 +244,17 @@ function SineTab({addScore, audio}) {
 
       <div style={S.card}>
         <div style={S.label}>주파수 선택 (클릭 시 재생)</div>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-          {SINE_FREQS.map(f=>{
-            const label=f>=1000?`${f/1000}kHz`:`${f}Hz`;
+        <div style={{display:"grid",gridTemplateColumns:octMode==="oct"?"1fr 1fr":"1fr 1fr 1fr",gap:6}}>
+          {freqs.map(f=>{
             const sel=guess===f;
             return (
               <button key={f} onClick={()=>{setGuess(f);play(f,1.5);}} style={{
-                padding:"14px 8px", borderRadius:8, fontFamily:"inherit",
-                fontSize:14, fontWeight:sel?"bold":"normal",
+                padding:octMode==="oct"?"14px 8px":"10px 4px", borderRadius:8, fontFamily:"inherit",
+                fontSize:octMode==="oct"?14:11, fontWeight:sel?"bold":"normal",
                 background:sel?AC_DIM:"rgba(255,255,255,0.04)",
                 border:sel?"1px solid "+AC:"1px solid rgba(255,255,255,0.1)",
                 color:sel?AC:"#aa9", cursor:"pointer", transition:"all 0.1s",
-              }}>{label}</button>
+              }}>{fmtFreq(f)}</button>
             );
           })}
         </div>
@@ -250,8 +263,8 @@ function SineTab({addScore, audio}) {
       {result&&(
         <div style={S.result(result.ok)}>
           {result.ok?"✓ 정답!":"✗ 오답."}
-          {" 정답: "}<strong>{result.target>=1000?`${result.target/1000}kHz`:`${result.target}Hz`}</strong>
-          {!result.ok&&<> | 선택: {result.guess>=1000?`${result.guess/1000}kHz`:`${result.guess}Hz`}</>}
+          {" 정답: "}<strong>{fmtFreq(result.target)}</strong>
+          {!result.ok&&<> | 선택: {fmtFreq(result.guess)}</>}
         </div>
       )}
       {!result
@@ -789,7 +802,7 @@ export default function App() {
       <div style={S.header}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
           <div>
-            <div style={{fontSize:9,color:AC,letterSpacing:3,marginBottom:2}}>♪ EAR TRAINING</div>
+            <div style={{fontSize:9,color:AC,letterSpacing:3,marginBottom:2}}>EAR TRAINING</div>
             <div style={{fontSize:18,fontWeight:"bold",letterSpacing:1}}>STAGE AUDIO TRAINER</div>
           </div>
           <div style={{
