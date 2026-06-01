@@ -13,9 +13,17 @@ const SOUND_EFFECTS = [
   { name: "디스토션 (Distortion)" },
   { name: "코러스 (Chorus)" },
   { name: "플랜저 (Flanger)" },
+  { name: "페이저 (Phaser)" },
   { name: "트레몰로 (Tremolo)" },
+  { name: "비브라토 (Vibrato)" },
+  { name: "오토패너 (Auto Pan)" },
+  { name: "비트크러셔 (Bitcrusher)" },
+  { name: "링모듈레이터 (Ring Mod)" },
+  { name: "와우 (Wah / Auto-Wah)" },
   { name: "로우패스 필터 (LPF)" },
   { name: "하이패스 필터 (HPF)" },
+  { name: "밴드패스 필터 (BPF)" },
+  { name: "노치 필터 (Notch)" },
 ];
 
 // ─── EQ 주파수 세트 ──────────────────────────────────────────────
@@ -88,6 +96,159 @@ function EQCanvas({ bands, height = 80 }) {
   return (
     <canvas ref={ref} width={600} height={height}
       style={{width:"100%",height,borderRadius:8,background:"rgba(0,0,0,0.4)",display:"block"}} />
+  );
+}
+
+// ─── 레벨 스텝 (7단계) ───────────────────────────────────────────
+const LEVEL_STEPS = [-12,-6,-3,0,3,6,12];
+
+// ─── FR 그래프 선택기 (가로 드래그=주파수 / 칸 단위 스텝) ─────────
+// freqs: 선택 가능한 주파수 배열
+// selIdx: 선택된 밴드 인덱스 (없으면 null)
+// gain: 현재 dB (그래프에 봉우리 표시용)
+// onPick: (idx) => void
+function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true}) {
+  const ref=useRef(null);
+  const draggingRef=useRef(false);
+
+  const idxFromX=(clientX)=>{
+    const rect=ref.current.getBoundingClientRect();
+    let r=(clientX-rect.left)/rect.width;
+    r=Math.max(0,Math.min(0.999,r));
+    return Math.floor(r*freqs.length);
+  };
+  const handleDown=(e)=>{ draggingRef.current=true; const x=e.touches?e.touches[0].clientX:e.clientX; onPick(idxFromX(x)); };
+  const handleMove=(e)=>{ if(!draggingRef.current) return; const x=e.touches?e.touches[0].clientX:e.clientX; onPick(idxFromX(x)); };
+  const handleUp=()=>{ draggingRef.current=false; };
+
+  useEffect(()=>{
+    const canvas=ref.current; if(!canvas) return;
+    const W=canvas.width,H=canvas.height,ctx=canvas.getContext("2d");
+    ctx.clearRect(0,0,W,H);
+    const n=freqs.length, bw=W/n;
+    // 세로 칸 그리드
+    for(let i=0;i<n;i++){
+      ctx.fillStyle = (i===selIdx)? "rgba(217,119,87,0.18)":"rgba(255,255,255,0.02)";
+      ctx.fillRect(i*bw,0,bw-1,H);
+    }
+    // dB 그리드 라인
+    ctx.strokeStyle="rgba(217,119,87,0.08)"; ctx.lineWidth=1;
+    [-12,-6,0,6,12].forEach(db=>{ const y=H/2-(db/16)*(H/2-8); ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); });
+    ctx.strokeStyle="rgba(217,119,87,0.22)"; ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();
+    // 선택 밴드 봉우리 곡선
+    if(selIdx!=null){
+      const cf=freqs[selIdx];
+      ctx.strokeStyle=gain<0?"#ff6666":AC; ctx.lineWidth=2.5; ctx.shadowColor=gain<0?"#ff6666":AC; ctx.shadowBlur=8;
+      ctx.beginPath();
+      for(let px=0;px<W;px++){
+        const bandIdx=Math.floor(px/bw);
+        const dist=Math.abs(bandIdx-selIdx);
+        const db = gain*Math.exp(-(dist*dist)/(2*(0.8+8/q)));
+        const y=H/2-(db/16)*(H/2-8);
+        px===0?ctx.moveTo(px,y):ctx.lineTo(px,y);
+      }
+      ctx.stroke(); ctx.shadowBlur=0;
+    }
+    // 주파수 라벨 — 10밴드 기준(63,125,250,500,1k,2k,4k,8k,16k) 우선 표시
+    ctx.fillStyle="rgba(255,220,200,0.8)"; ctx.font="bold 11px monospace"; ctx.textAlign="center";
+    const KEY=[31.5,63,125,250,500,1000,2000,4000,8000,16000];
+    if(n<=10){
+      for(let i=0;i<n;i++){
+        const f=freqs[i]; const l=f>=1000?(f/1000)+"k":""+f;
+        ctx.fillText(l, i*bw+bw/2, H-5);
+      }
+    } else {
+      // 31밴드: KEY 주파수에 가장 가까운 밴드에만 라벨
+      KEY.forEach(kf=>{
+        let bi=0,best=1e9;
+        freqs.forEach((f,i)=>{ const d=Math.abs(Math.log2(f/kf)); if(d<best){best=d;bi=i;} });
+        const f=freqs[bi]; const l=f>=1000?(f/1000)+"k":""+f;
+        ctx.fillText(l, bi*bw+bw/2, H-5);
+      });
+    }
+    // 선택된 대역 주파수를 크게 강조 표시
+    if(selIdx!=null){
+      const f=freqs[selIdx]; const l=f>=1000?`${f/1000}kHz`:`${f}Hz`;
+      ctx.fillStyle=AC; ctx.font="bold 18px monospace"; ctx.textAlign="center";
+      ctx.fillText(l, W/2, 22);
+    }
+  },[freqs,selIdx,gain,q]);
+
+  return (
+    <canvas ref={ref} width={600} height={height}
+      onMouseDown={handleDown} onMouseMove={handleMove} onMouseUp={handleUp} onMouseLeave={handleUp}
+      onTouchStart={handleDown} onTouchMove={handleMove} onTouchEnd={handleUp}
+      style={{width:"100%",height,borderRadius:8,background:"rgba(0,0,0,0.45)",display:"block",touchAction:"none",cursor:"pointer"}} />
+  );
+}
+
+const NODRAG = {userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none"};
+
+// 주파수 대역 선택 시 자동으로 채울 dB
+function autoGainOnPick(mode, diff){
+  if(diff==="extra") return 0;
+  const v = DIFFICULTY[diff].gainAbs;
+  return mode==="cut" ? -v : v;
+}
+
+// 누르고 있는 동안 동작 + 눌림 색변화 버튼
+function HoldButton({onStart,onEnd,children}) {
+  const [down,setDown]=useState(false);
+  const start=(e)=>{ e.preventDefault(); setDown(true); onStart(); };
+  const end=()=>{ setDown(false); onEnd(); };
+  return (
+    <button
+      onMouseDown={start} onMouseUp={end} onMouseLeave={()=>{ if(down) end(); }}
+      onTouchStart={start} onTouchEnd={end}
+      style={{
+        width:"100%",padding:"12px 18px",fontSize:13,fontFamily:"inherit",borderRadius:8,
+        marginBottom:0,cursor:"pointer",transition:"all 0.08s",...NODRAG,
+        background: down?AC:"rgba(255,255,255,0.06)",
+        border: down?"1px solid "+AC:"1px solid rgba(255,255,255,0.1)",
+        color: down?"#1a1208":"#aa9", fontWeight: down?"bold":"normal",
+      }}>{children}</button>
+  );
+}
+
+// 주파수 슬라이더 (밴드 인덱스 스텝)
+function FreqSlider({freqs, idx, onChange}) {
+  return (
+    <input type="range" min={0} max={freqs.length-1} step={1} value={idx==null?Math.floor(freqs.length/2):idx}
+      onChange={e=>onChange(+e.target.value)}
+      style={{width:"100%",accentColor:AC,cursor:"pointer",marginTop:8}} />
+  );
+}
+
+// ─── 레벨 스텝 슬라이더 (난이도+모드 조합별 선택지) ───────────────
+function levelStepsFor(mode, diff){
+  if(diff==="extra"){
+    if(mode==="boost") return [3,6,12];
+    if(mode==="cut") return [-3,-6,-12];
+    return [-12,-6,-3,0,3,6,12]; // all + xhard
+  }
+  const v = DIFFICULTY[diff].gainAbs; // 12/6/3
+  if(mode==="all") return [v,-v];     // all: +v / -v
+  return null; // boost/cut + easy/normal/hard → dB 고정
+}
+
+function LevelStep({value,onChange,mode,diff}) {
+  const steps = levelStepsFor(mode,diff);
+  if(!steps) return null;
+  return (
+    <div style={{display:"flex",gap:4,marginTop:4,...NODRAG}}>
+      {steps.map(s=>{
+        const on=value===s; const pos=s>0, neg=s<0;
+        return (
+          <button key={s} onClick={()=>onChange(s)} style={{
+            flex:1,padding:"14px 2px",borderRadius:6,fontFamily:"inherit",
+            fontSize:14,fontWeight:on?"bold":"normal",cursor:"pointer",...NODRAG,
+            background:on?(neg?"rgba(255,60,60,0.15)":pos?AC_DIM:"rgba(255,255,255,0.08)"):"rgba(255,255,255,0.03)",
+            border:on?(neg?"1px solid #ff6666":pos?"1px solid "+AC:"1px solid #888"):"1px solid rgba(255,255,255,0.08)",
+            color:on?(neg?"#ff6666":pos?AC:"#ccc"):"#776",
+          }}>{s>0?`+${s}`:s}</button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -259,20 +420,14 @@ function SineTab({addScore, audio}) {
       </div>
 
       <div style={S.card}>
-        <div style={S.label}>주파수 선택 (클릭 시 미리듣기)</div>
-        <div style={{display:"grid",gridTemplateColumns:octMode==="oct"?"1fr 1fr":"1fr 1fr 1fr",gap:6}}>
-          {freqs.map(f=>{
-            const sel=guess===f;
-            return (
-              <button key={f} onClick={()=>{setGuess(f);preview(f);setPlaying(false);}} style={{
-                padding:octMode==="oct"?"14px 8px":"10px 4px", borderRadius:8, fontFamily:"inherit",
-                fontSize:octMode==="oct"?14:11, fontWeight:sel?"bold":"normal",
-                background:sel?AC_DIM:"rgba(255,255,255,0.04)",
-                border:sel?"1px solid "+AC:"1px solid rgba(255,255,255,0.1)",
-                color:sel?AC:"#aa9", cursor:"pointer", transition:"all 0.1s",
-              }}>{fmtFreq(f)}</button>
-            );
-          })}
+        <div style={S.label}>주파수 — 그래프 드래그 또는 슬라이더로 선택</div>
+        <FRGraph freqs={freqs} selIdx={guess==null?null:freqs.indexOf(guess)} gain={guess!=null?10:0} q={6}
+          onPick={(i)=>{ const f=freqs[i]; setGuess(f); }}
+          height={140}/>
+        <FreqSlider freqs={freqs} idx={guess==null?null:freqs.indexOf(guess)}
+          onChange={(i)=>{ const f=freqs[i]; setGuess(f); }}/>
+        <div style={{fontSize:15,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
+          {guess==null?"대역 미선택":fmtFreq(guess)}
         </div>
       </div>
 
@@ -308,82 +463,133 @@ function snapGains(diffKey){
 }
 
 function makeEqQuestion(freqs, diffKey, mode, userQ) {
-  // mode: "boost" | "cut" | "all"
-  const n = Math.floor(Math.random()*2)+1; // 1~2밴드
-  const bands=[]; const used=new Set();
+  // mode: "boost" | "cut" | "all" — 한 문제에 1밴드만
+  const idx = Math.floor(Math.random()*freqs.length);
   const gains = snapGains(diffKey);
-  for(let i=0;i<n;i++){
-    let idx; do{idx=Math.floor(Math.random()*freqs.length);}while(used.has(idx));
-    used.add(idx);
-    const gainAbs = gains[Math.floor(Math.random()*gains.length)];
-    const q = diffKey==="extra" ? [1,2,3,5,8][Math.floor(Math.random()*5)] : userQ;
-    let sign;
-    if(mode==="boost") sign=1;
-    else if(mode==="cut") sign=-1;
-    else sign = Math.random()<0.5?1:-1;
-    bands.push({freq:freqs[idx], gain:sign*gainAbs, q});
-  }
-  return bands;
+  const gainAbs = gains[Math.floor(Math.random()*gains.length)];
+  const q = diffKey==="extra" ? [1,2,3,5,8][Math.floor(Math.random()*5)] : userQ;
+  let sign;
+  if(mode==="boost") sign=1;
+  else if(mode==="cut") sign=-1;
+  else sign = Math.random()<0.5?1:-1;
+  return [{freq:freqs[idx], gain:sign*gainAbs, q}];
 }
 
 // ════════════════════════════════════════════════════════════════
-// EQ 슬라이더 그룹 (밴드 수에 따라 3줄 분할)
-// snapVal: 난이도별 게인 절댓값 (easy12/normal6/hard3), extra는 null
-// mode: boost/cut/all → 슬라이더 클릭 시 자동으로 채워줄 부호 결정
+// EQ 입력 그룹 (밴드 수에 따라 3줄 분할)
+// snapVal: 난이도별 게인 절댓값. null이면 X-Hard(슬라이더)
+// mode: boost/cut/all
 // ════════════════════════════════════════════════════════════════
 function EqSliders({userBands, setUserBands, rows=1, snapVal, mode}) {
   const fLabel=f=>f>=1000?`${f/1000}k`:`${f}`;
   const perRow = Math.ceil(userBands.length/rows);
   const chunks=[];
   for(let i=0;i<userBands.length;i+=perRow) chunks.push(userBands.slice(i,i+perRow));
+  const big = userBands.length<=10; // 10밴드는 크게, 31밴드는 작게
 
-  // 밴드 클릭(탭) 시 난이도 값으로 자동 설정. all이면 +/- 토글.
-  const handleTap=(gi,cur)=>{
-    if(snapVal==null) return; // extra는 수동
-    setUserBands(prev=>prev.map((x,j)=>{
-      if(j!==gi) return x;
-      let next;
-      if(mode==="boost") next = (cur===snapVal?0:snapVal);
-      else if(mode==="cut") next = (cur===-snapVal?0:-snapVal);
-      else { // all: 0 → +snap → -snap → 0 순환
-        if(cur===0) next=snapVal;
-        else if(cur===snapVal) next=-snapVal;
-        else next=0;
-      }
-      return {...x,gain:next};
-    }));
+  const setGain=(gi,val)=>setUserBands(prev=>prev.map((x,j)=>j===gi?{...x,gain:val}:x));
+
+  // boost/cut 단일 버튼 토글
+  const tapSingle=(gi,cur)=>{
+    const v = mode==="cut"?-snapVal:snapVal;
+    setGain(gi, cur===v?0:v);
   };
 
+  // ── X-Hard: 슬라이더 모드 ──
+  if(snapVal==null){
+    return (
+      <>
+        {chunks.map((chunk,ci)=>(
+          <div key={ci} style={{display:"flex",justifyContent:"space-around",marginBottom:10,gap:2}}>
+            {chunk.map((b)=>{
+              const gi=userBands.indexOf(b);
+              return (
+                <div key={b.freq} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,flex:1,minWidth:0}}>
+                  <div style={{fontSize:big?12:9,fontWeight:"bold",color:b.gain>0?AC:b.gain<0?"#f66":"#554",textAlign:"center"}}>
+                    {b.gain>0?`+${b.gain}`:b.gain}
+                  </div>
+                  <input type="range" min={-12} max={12} step={1} value={b.gain}
+                    onChange={e=>setGain(gi,+e.target.value)}
+                    style={{writingMode:"vertical-lr",direction:"rtl",height:90,accentColor:AC,cursor:"pointer",width:16}} />
+                  <div style={{fontSize:big?11:8,color:"#998",fontWeight:"bold"}}>{fLabel(b.freq)}</div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        <div style={{fontSize:10,color:"#665",textAlign:"center",marginTop:2}}>X-Hard: 슬라이더로 직접 맞추기</div>
+      </>
+    );
+  }
+
+  // ── All 모드: 위(부스트)/아래(컷) 버튼 ──
+  if(mode==="all"){
+    return (
+      <>
+        {chunks.map((chunk,ci)=>(
+          <div key={ci} style={{display:"flex",justifyContent:"space-around",marginBottom:10,gap:big?6:3}}>
+            {chunk.map((b)=>{
+              const gi=userBands.indexOf(b);
+              const upOn=b.gain>0, dnOn=b.gain<0;
+              return (
+                <div key={b.freq} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1,minWidth:0}}>
+                  <button onClick={()=>setGain(gi, upOn?0:snapVal)} style={{
+                    width:"100%",padding:big?"10px 0":"7px 0",borderRadius:6,fontFamily:"inherit",
+                    fontSize:big?14:10,fontWeight:"bold",cursor:"pointer",
+                    background:upOn?AC_DIM:"rgba(255,255,255,0.04)",
+                    border:upOn?"1px solid "+AC:"1px solid rgba(255,255,255,0.1)",
+                    color:upOn?AC:"#778",
+                  }}>▲</button>
+                  <div style={{fontSize:big?13:9,fontWeight:"bold",color:b.gain>0?AC:b.gain<0?"#f66":"#554"}}>
+                    {b.gain>0?`+${b.gain}`:b.gain}
+                  </div>
+                  <button onClick={()=>setGain(gi, dnOn?0:-snapVal)} style={{
+                    width:"100%",padding:big?"10px 0":"7px 0",borderRadius:6,fontFamily:"inherit",
+                    fontSize:big?14:10,fontWeight:"bold",cursor:"pointer",
+                    background:dnOn?"rgba(255,60,60,0.12)":"rgba(255,255,255,0.04)",
+                    border:dnOn?"1px solid #ff6666":"1px solid rgba(255,255,255,0.1)",
+                    color:dnOn?"#ff6666":"#778",
+                  }}>▼</button>
+                  <div style={{fontSize:big?12:8,color:"#998",fontWeight:"bold",marginTop:2}}>{fLabel(b.freq)}</div>
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        <div style={{fontSize:10,color:"#665",textAlign:"center",marginTop:2}}>▲ +{snapVal}dB 부스트 / ▼ -{snapVal}dB 컷</div>
+      </>
+    );
+  }
+
+  // ── Boost / Cut 모드: 단일 토글 버튼 ──
   return (
     <>
       {chunks.map((chunk,ci)=>(
-        <div key={ci} style={{display:"flex",justifyContent:"space-around",marginBottom:10,gap:2}}>
+        <div key={ci} style={{display:"flex",justifyContent:"space-around",marginBottom:10,gap:big?6:3}}>
           {chunk.map((b)=>{
             const gi=userBands.indexOf(b);
+            const on=b.gain!==0;
+            const isCut=mode==="cut";
             return (
-              <div key={b.freq} onClick={()=>handleTap(gi,b.gain)}
-                style={{display:"flex",flexDirection:"column",alignItems:"center",gap:3,flex:1,minWidth:0,cursor:snapVal!=null?"pointer":"default"}}>
-                <div style={{fontSize:8,color:b.gain>0?AC:b.gain<0?"#f66":"#554",minWidth:20,textAlign:"center"}}>
-                  {b.gain>0?`+${b.gain}`:b.gain}
-                </div>
-                <input type="range" min={-12} max={12} step={1} value={b.gain}
-                  onClick={e=>e.stopPropagation()}
-                  onChange={e=>setUserBands(prev=>prev.map((x,j)=>j===gi?{...x,gain:+e.target.value}:x))}
-                  style={{writingMode:"vertical-lr",direction:"rtl",height:90,accentColor:AC,cursor:"pointer",width:14}} />
-                <div style={{fontSize:7,color:"#665"}}>{fLabel(b.freq)}</div>
+              <div key={b.freq} style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4,flex:1,minWidth:0}}>
+                <button onClick={()=>tapSingle(gi,b.gain)} style={{
+                  width:"100%",padding:big?"16px 0":"11px 0",borderRadius:8,fontFamily:"inherit",
+                  fontSize:big?14:10,fontWeight:"bold",cursor:"pointer",
+                  background:on?(isCut?"rgba(255,60,60,0.12)":AC_DIM):"rgba(255,255,255,0.04)",
+                  border:on?(isCut?"1px solid #ff6666":"1px solid "+AC):"1px solid rgba(255,255,255,0.1)",
+                  color:on?(isCut?"#ff6666":AC):"#778",
+                }}>{on?(b.gain>0?`+${b.gain}`:b.gain):(isCut?"▼":"▲")}</button>
+                <div style={{fontSize:big?12:8,color:"#998",fontWeight:"bold"}}>{fLabel(b.freq)}</div>
               </div>
             );
           })}
         </div>
       ))}
-      {snapVal!=null&&(
-        <div style={{fontSize:9,color:"#665",textAlign:"center",marginTop:2}}>
-          {mode==="all"?`밴드 탭: 0 → +${snapVal} → -${snapVal} 순환`:`밴드 탭: ${mode==="cut"?"-":"+"}${snapVal}dB 자동 / 슬라이더로 미세조정`}
-        </div>
-      )}
+      <div style={{fontSize:10,color:"#665",textAlign:"center",marginTop:2}}>밴드 탭: {isCutLabel(mode)}{snapVal}dB</div>
     </>
   );
 }
+function isCutLabel(mode){ return mode==="cut"?"-":"+"; }
 
 // 옵션 패널 (밴드/모드/난이도/Q) — 공통. Q는 항상 조절 가능.
 function EqOptions({bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}) {
@@ -408,26 +614,28 @@ function EqOptions({bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}) 
 // ════════════════════════════════════════════════════════════════
 function PinkNoiseTab({addScore, audio}) {
   const [bandSet,setBandSet]=useState(10);
-  const [mode,setMode]=useState("all");
-  const [diff,setDiff]=useState("normal");
+  const [mode,setMode]=useState("boost");
+  const [diff,setDiff]=useState("easy");
   const [qVal,setQVal]=useState(3.0);
   const [qBands,setQBands]=useState(null);
-  const [userBands,setUserBands]=useState([]);
+  const [userIdx,setUserIdx]=useState(null);   // 선택 밴드 인덱스
+  const [userGain,setUserGain]=useState(0);     // 선택 dB
   const [playing,setPlaying]=useState(false);
   const [result,setResult]=useState(null);
   const srcRef=useRef(null);
+  const bufRef=useRef(null); // 핑크노이즈 버퍼 (원본/문제 동일 소스)
 
   const freqs = bandSet===10?EQ_10:EQ_31;
 
   const stopAudio=()=>{try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);};
 
-  const playNoise=async(bands)=>{
+  const play=async(bands)=>{
     stopAudio();
     const ctx=audio.getCtx();
     if(ctx.state==="suspended") await ctx.resume();
-    const buf=createPinkNoiseBuffer(ctx);
+    if(!bufRef.current) bufRef.current=createPinkNoiseBuffer(ctx);
     const src=ctx.createBufferSource();
-    src.buffer=buf; src.loop=true;
+    src.buffer=bufRef.current; src.loop=true;
     let prev=src;
     bands.forEach(({freq,gain,q=3})=>{
       if(gain===0) return;
@@ -440,69 +648,86 @@ function PinkNoiseTab({addScore, audio}) {
     src.start(); srcRef.current=src; setPlaying(true);
   };
 
+  // 문제 재생 토글
+  const togglePlay=()=>{ if(playing) stopAudio(); else play(qBands); };
+  // 원본 — 누르고 있는 동안만. 누르기 전 문제 재생 중이었으면 떼고 나서 복귀
+  const wasPlayingRef=useRef(false);
+  const holdStart=()=>{ wasPlayingRef.current=playing; play([{freq:1000,gain:0}]); };
+  const holdEnd=()=>{ if(wasPlayingRef.current){ play(qBands); } else { stopAudio(); } };
+
   const newQ=()=>{
-    const bands=makeEqQuestion(freqs,diff,mode,qVal);
-    setQBands(bands);
-    setUserBands(freqs.map(f=>({freq:f,gain:0})));
+    bufRef.current=null; // 새 노이즈
+    setQBands(makeEqQuestion(freqs,diff,mode,qVal));
+    setUserIdx(null); setUserGain(0);
     setResult(null); stopAudio();
   };
 
   const submit=()=>{
-    if(!qBands) return;
-    let err=0;
-    qBands.forEach(qb=>{
-      const ub=userBands.find(b=>b.freq===qb.freq);
-      err+=Math.abs((ub?.gain||0)-qb.gain);
-    });
-    const avg=err/qBands.length;
+    if(!qBands||userIdx==null) return;
+    const ans=qBands[0];
+    const ansIdx=freqs.indexOf(ans.freq);
+    const freqOk = userIdx===ansIdx;
+    const gainErr = Math.abs(userGain-ans.gain);
     const tol = diff==="hard"||diff==="extra"?3:4;
-    const ok=avg<=tol;
-    setResult({ok,avg:avg.toFixed(1),answer:qBands});
+    const ok = freqOk && gainErr<=tol;
+    setResult({ok,freqOk,gainErr,answer:ans});
     addScore(ok); stopAudio();
   };
 
-  // ⭐ 탭 떠날 때 반드시 정지 (버그 수정)
   useEffect(()=>{ return ()=>stopAudio(); },[]);
-  useEffect(()=>{ stopAudio(); setQBands(null); setResult(null); },[bandSet]);
+  // 옵션이 바뀌면 자동으로 새 문제 생성 (수동 버튼 불필요)
+  useEffect(()=>{ newQ(); },[bandSet,mode,diff,qVal]);
+
+  const curGain = userIdx==null?0:userGain;
 
   return (
     <div style={{padding:16}}>
       <div style={S.card}>
         <div style={S.label}>② 핑크노이즈 EQ 맞추기</div>
-        <div style={{fontSize:12,color:"#776"}}>옵션 선택 후 문제를 생성하세요</div>
+        <div style={{fontSize:12,color:"#776"}}>옵션을 바꾸면 자동으로 새 문제가 나옵니다</div>
       </div>
 
       <EqOptions {...{bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}}/>
 
-      <Btn accent onClick={newQ}>새 문제 생성</Btn>
-
       {qBands&&(
         <>
           <div style={S.card}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <Btn accent onClick={()=>playNoise(qBands)} disabled={playing} style={{marginBottom:0}}>▶ 문제 재생</Btn>
-              <Btn onClick={()=>playNoise([{freq:1000,gain:0}])} disabled={playing} style={{marginBottom:0}}>▶ 원본 (Flat)</Btn>
-            </div>
-            <Btn onClick={stopAudio} disabled={!playing}>■ 정지</Btn>
-            {playing&&<div style={{fontSize:11,color:AC}}>◉ 재생 중</div>}
+            <Btn accent onClick={togglePlay} style={{marginBottom:8}}>
+              {playing?"■ 재생 정지":"▶ 문제 재생"}
+            </Btn>
+            <HoldButton onStart={holdStart} onEnd={holdEnd}>원본</HoldButton>
           </div>
 
           <div style={S.card}>
-            <div style={S.label}>EQ 설정 ({bandSet}밴드)</div>
-            <EqSliders userBands={userBands} setUserBands={setUserBands} rows={bandSet===31?3:1} snapVal={diff==="extra"?null:DIFFICULTY[diff].gainAbs} mode={mode}/>
-            <EQCanvas bands={userBands} height={80}/>
+            <div style={S.label}>① 주파수 — 그래프 드래그 또는 슬라이더</div>
+            <FRGraph freqs={freqs} selIdx={userIdx} gain={curGain} q={qVal}
+              onPick={(i)=>{ setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}
+              height={140}/>
+            <FreqSlider freqs={freqs} idx={userIdx}
+              onChange={(i)=>{ setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}/>
+            <div style={{fontSize:13,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
+              {userIdx==null?"대역 미선택":`${fmtFreq(freqs[userIdx])}  ${userGain>0?"+":""}${userGain}dB`}
+            </div>
           </div>
+
+          {levelStepsFor(mode,diff)&&(
+            <div style={S.card}>
+              <div style={S.label}>② 레벨 — dB 선택</div>
+              <LevelStep value={userGain} onChange={setUserGain} mode={mode} diff={diff}/>
+            </div>
+          )}
 
           {result&&(
             <div style={S.result(result.ok)}>
-              {result.ok?"✓ 정답!":"✗ 오답."} 평균 오차 {result.avg}dB
+              {result.ok?"✓ 정답!":"✗ 오답."}
+              {!result.ok&&<span style={{fontSize:11}}> {result.freqOk?"주파수 맞음":"주파수 틀림"} · 레벨오차 {result.gainErr}dB</span>}
               <div style={{marginTop:6,fontSize:12}}>
-                정답: {result.answer.map(b=>`${b.freq>=1000?`${b.freq/1000}kHz`:`${b.freq}Hz`} ${b.gain>0?"+":""}${b.gain}dB`).join(" / ")}
+                정답: {result.answer.freq>=1000?`${result.answer.freq/1000}kHz`:`${result.answer.freq}Hz`} {result.answer.gain>0?"+":""}{result.answer.gain}dB
               </div>
             </div>
           )}
           {!result
-            ? <Btn accent onClick={submit}>정답 제출</Btn>
+            ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
             : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
         </>
       )}
@@ -515,11 +740,12 @@ function PinkNoiseTab({addScore, audio}) {
 // ════════════════════════════════════════════════════════════════
 function MusicEQTab({addScore, audio, sharedFile}) {
   const [bandSet,setBandSet]=useState(10);
-  const [mode,setMode]=useState("all");
-  const [diff,setDiff]=useState("normal");
+  const [mode,setMode]=useState("boost");
+  const [diff,setDiff]=useState("easy");
   const [qVal,setQVal]=useState(3.0);
   const [qBands,setQBands]=useState(null);
-  const [userBands,setUserBands]=useState([]);
+  const [userIdx,setUserIdx]=useState(null);
+  const [userGain,setUserGain]=useState(0);
   const [playing,setPlaying]=useState(false);
   const [result,setResult]=useState(null);
   const srcRef=useRef(null);
@@ -529,7 +755,7 @@ function MusicEQTab({addScore, audio, sharedFile}) {
 
   const stopAudio=()=>{try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);};
 
-  const playAudio=async(bands)=>{
+  const play=async(bands)=>{
     stopAudio();
     if(!file||!file.buffer) return;
     const ctx=audio.getCtx();
@@ -548,29 +774,35 @@ function MusicEQTab({addScore, audio, sharedFile}) {
     src.start(); srcRef.current=src; setPlaying(true);
   };
 
+  const togglePlay=()=>{ if(playing) stopAudio(); else play(qBands); };
+  const wasPlayingRef=useRef(false);
+  const holdStart=()=>{ wasPlayingRef.current=playing; play([{freq:1000,gain:0}]); };
+  const holdEnd=()=>{ if(wasPlayingRef.current){ play(qBands); } else { stopAudio(); } };
+
   const newQ=()=>{
     if(!file||!file.buffer) return;
     setQBands(makeEqQuestion(freqs,diff,mode,qVal));
-    setUserBands(freqs.map(f=>({freq:f,gain:0})));
+    setUserIdx(null); setUserGain(0);
     setResult(null); stopAudio();
   };
 
   const submit=()=>{
-    if(!qBands) return;
-    let err=0;
-    qBands.forEach(qb=>{
-      const ub=userBands.find(b=>b.freq===qb.freq);
-      err+=Math.abs((ub?.gain||0)-qb.gain);
-    });
-    const avg=err/qBands.length;
-    const tol = diff==="hard"||diff==="extra"?3:4;
-    const ok=avg<=tol;
-    setResult({ok,avg:avg.toFixed(1),answer:qBands});
+    if(!qBands||userIdx==null) return;
+    const ans=qBands[0];
+    const ansIdx=freqs.indexOf(ans.freq);
+    const freqOk=userIdx===ansIdx;
+    const gainErr=Math.abs(userGain-ans.gain);
+    const tol=diff==="hard"||diff==="extra"?3:4;
+    const ok=freqOk&&gainErr<=tol;
+    setResult({ok,freqOk,gainErr,answer:ans});
     addScore(ok); stopAudio();
   };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
-  useEffect(()=>{ stopAudio(); setQBands(null); setResult(null); },[bandSet]);
+  // 파일 준비됐거나 옵션 바뀌면 자동으로 새 문제
+  useEffect(()=>{ if(file&&file.buffer) newQ(); },[bandSet,mode,diff,qVal,file]);
+
+  const curGain = userIdx==null?0:userGain;
 
   return (
     <div style={{padding:16}}>
@@ -580,39 +812,48 @@ function MusicEQTab({addScore, audio, sharedFile}) {
       </div>
 
       {file&&file.buffer&&(
-        <>
-          <EqOptions {...{bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}}/>
-          <Btn accent onClick={newQ}>새 문제 생성</Btn>
-        </>
+        <EqOptions {...{bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}}/>
       )}
 
       {qBands&&(
         <>
           <div style={S.card}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <Btn accent onClick={()=>playAudio(qBands)} disabled={playing} style={{marginBottom:0}}>▶ 문제 재생</Btn>
-              <Btn onClick={()=>playAudio([{freq:1000,gain:0}])} disabled={playing} style={{marginBottom:0}}>▶ 원본</Btn>
-            </div>
-            <Btn onClick={stopAudio} disabled={!playing}>■ 정지</Btn>
-            {playing&&<div style={{fontSize:11,color:AC}}>◉ 재생 중</div>}
+            <Btn accent onClick={togglePlay} style={{marginBottom:8}}>
+              {playing?"■ 재생 정지":"▶ 문제 재생"}
+            </Btn>
+            <HoldButton onStart={holdStart} onEnd={holdEnd}>원본</HoldButton>
           </div>
 
           <div style={S.card}>
-            <div style={S.label}>EQ 설정 ({bandSet}밴드)</div>
-            <EqSliders userBands={userBands} setUserBands={setUserBands} rows={bandSet===31?3:1} snapVal={diff==="extra"?null:DIFFICULTY[diff].gainAbs} mode={mode}/>
-            <EQCanvas bands={userBands} height={80}/>
+            <div style={S.label}>① 주파수 — 그래프 드래그 또는 슬라이더</div>
+            <FRGraph freqs={freqs} selIdx={userIdx} gain={curGain} q={qVal}
+              onPick={(i)=>{ setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}
+              height={140}/>
+            <FreqSlider freqs={freqs} idx={userIdx}
+              onChange={(i)=>{ setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}/>
+            <div style={{fontSize:13,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
+              {userIdx==null?"대역 미선택":`${fmtFreq(freqs[userIdx])}  ${userGain>0?"+":""}${userGain}dB`}
+            </div>
           </div>
+
+          {levelStepsFor(mode,diff)&&(
+            <div style={S.card}>
+              <div style={S.label}>② 레벨 — dB 선택</div>
+              <LevelStep value={userGain} onChange={setUserGain} mode={mode} diff={diff}/>
+            </div>
+          )}
 
           {result&&(
             <div style={S.result(result.ok)}>
-              {result.ok?"✓ 정답!":"✗ 오답."} 평균 오차 {result.avg}dB
+              {result.ok?"✓ 정답!":"✗ 오답."}
+              {!result.ok&&<span style={{fontSize:11}}> {result.freqOk?"주파수 맞음":"주파수 틀림"} · 레벨오차 {result.gainErr}dB</span>}
               <div style={{marginTop:6,fontSize:12}}>
-                정답: {result.answer.map(b=>`${b.freq>=1000?`${b.freq/1000}kHz`:`${b.freq}Hz`} ${b.gain>0?"+":""}${b.gain}dB`).join(" / ")}
+                정답: {result.answer.freq>=1000?`${result.answer.freq/1000}kHz`:`${result.answer.freq}Hz`} {result.answer.gain>0?"+":""}{result.answer.gain}dB
               </div>
             </div>
           )}
           {!result
-            ? <Btn accent onClick={submit}>정답 제출</Btn>
+            ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
             : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
         </>
       )}
@@ -690,6 +931,51 @@ function EffectsTab({addScore, audio, sharedFile}) {
       const f=ctx.createBiquadFilter(); f.type="lowpass"; f.frequency.value=600; f.Q.value=1; src.connect(f); last=f;
     } else if(effectName==="하이패스 필터 (HPF)"){
       const f=ctx.createBiquadFilter(); f.type="highpass"; f.frequency.value=2500; f.Q.value=1; src.connect(f); last=f;
+    } else if(effectName==="밴드패스 필터 (BPF)"){
+      const f=ctx.createBiquadFilter(); f.type="bandpass"; f.frequency.value=1200; f.Q.value=2.5; src.connect(f); last=f;
+    } else if(effectName==="노치 필터 (Notch)"){
+      const f=ctx.createBiquadFilter(); f.type="notch"; f.frequency.value=1500; f.Q.value=3; src.connect(f); last=f;
+    } else if(effectName==="페이저 (Phaser)"){
+      // 여러 allpass를 LFO로 흔들기
+      const lfo=ctx.createOscillator(); lfo.frequency.value=0.5;
+      const lg=ctx.createGain(); lg.gain.value=800; lfo.connect(lg); lfo.start();
+      let node=src;
+      for(let i=0;i<4;i++){
+        const ap=ctx.createBiquadFilter(); ap.type="allpass"; ap.frequency.value=400+i*300;
+        lg.connect(ap.frequency); node.connect(ap); node=ap;
+      }
+      const wet=ctx.createGain(); wet.gain.value=0.7;
+      src.connect(out); node.connect(wet); wet.connect(out); last=null;
+    } else if(effectName==="비브라토 (Vibrato)"){
+      const dl=ctx.createDelay(); dl.delayTime.value=0.005;
+      const lfo=ctx.createOscillator(); lfo.frequency.value=5;
+      const lg=ctx.createGain(); lg.gain.value=0.003;
+      lfo.connect(lg); lg.connect(dl.delayTime); lfo.start();
+      src.connect(dl); last=dl; // 원음 없이 변조만 → 피치 흔들림
+    } else if(effectName==="오토패너 (Auto Pan)"){
+      const panner=ctx.createStereoPanner();
+      const lfo=ctx.createOscillator(); lfo.frequency.value=1.5;
+      const lg=ctx.createGain(); lg.gain.value=0.9;
+      lfo.connect(lg); lg.connect(panner.pan); lfo.start();
+      src.connect(panner); last=panner;
+    } else if(effectName==="비트크러셔 (Bitcrusher)"){
+      // WaveShaper로 양자화 계단 만들기
+      const ws=ctx.createWaveShaper();
+      const bits=4, steps=Math.pow(2,bits), n=44100, curve=new Float32Array(n);
+      for(let i=0;i<n;i++){ const x=i*2/n-1; curve[i]=Math.round(x*steps)/steps; }
+      ws.curve=curve; src.connect(ws); last=ws;
+    } else if(effectName==="링모듈레이터 (Ring Mod)"){
+      const ring=ctx.createGain(); ring.gain.value=0;
+      const carrier=ctx.createOscillator(); carrier.frequency.value=300;
+      carrier.connect(ring.gain); carrier.start();
+      src.connect(ring); last=ring;
+    } else if(effectName==="와우 (Wah / Auto-Wah)"){
+      const f=ctx.createBiquadFilter(); f.type="bandpass"; f.Q.value=5;
+      const lfo=ctx.createOscillator(); lfo.frequency.value=1.2;
+      const lg=ctx.createGain(); lg.gain.value=700;
+      const base=ctx.createConstantSource(); base.offset.value=900; base.start();
+      base.connect(f.frequency); lfo.connect(lg); lg.connect(f.frequency); lfo.start();
+      src.connect(f); last=f;
     }
     if(last) last.connect(out);
     out.connect(dest);
