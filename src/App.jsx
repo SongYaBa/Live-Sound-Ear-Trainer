@@ -270,8 +270,8 @@ const S = {
     display:"flex", zIndex:100,
   },
   tabBtn: (active) => ({
-    flex:1, padding:"10px 4px 12px", border:"none", background:"none",
-    color: active?AC:"#665", fontFamily:"inherit", fontSize:10, cursor:"pointer",
+    flex:1, padding:"10px 2px 12px", border:"none", background:"none",
+    color: active?AC:"#665", fontFamily:"inherit", fontSize:9.5, cursor:"pointer",
     display:"flex", flexDirection:"column", alignItems:"center", gap:3,
     borderTop: active?"2px solid "+AC:"2px solid transparent", transition:"all 0.15s",
   }),
@@ -1045,6 +1045,120 @@ function EffectsTab({addScore, audio, sharedFile}) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// ⑤ 피드백(하울링) 트레이너 — 점점 커지는 링잉 재현
+// ════════════════════════════════════════════════════════════════
+function FeedbackTab({addScore, audio}) {
+  const [bandSet,setBandSet]=useState(31); // 피드백은 정밀하게 31밴드 기본
+  const [target,setTarget]=useState(null); // 정답 주파수
+  const [userIdx,setUserIdx]=useState(null);
+  const [running,setRunning]=useState(false);
+  const [result,setResult]=useState(null);
+  const srcRef=useRef(null);
+  const nodesRef=useRef([]);
+  const bufRef=useRef(null);
+  const rampRef=useRef(null);
+
+  const freqs = bandSet===10?EQ_10:EQ_31;
+
+  const stopAudio=()=>{
+    if(rampRef.current){ clearInterval(rampRef.current); rampRef.current=null; }
+    try{srcRef.current?.stop();}catch(e){}
+    srcRef.current=null; nodesRef.current=[]; setRunning(false);
+  };
+
+  // 배경 핑크노이즈 + 정답 주파수 피크필터를 서서히 키워 하울링 재현
+  const start=async(freq)=>{
+    stopAudio();
+    const ctx=audio.getCtx();
+    if(ctx.state==="suspended") await ctx.resume();
+    if(!bufRef.current) bufRef.current=createPinkNoiseBuffer(ctx);
+    const src=ctx.createBufferSource();
+    src.buffer=bufRef.current; src.loop=true;
+
+    // 하울링 피크 (아주 좁은 Q, 게인 0에서 시작)
+    const peak=ctx.createBiquadFilter();
+    peak.type="peaking"; peak.frequency.value=freq; peak.Q.value=18; peak.gain.value=0;
+    // 배경은 살짝 줄이고, 피드백 강조
+    const bg=ctx.createGain(); bg.gain.value=0.35;
+
+    src.connect(bg); bg.connect(peak);
+    const g=ctx.createGain(); g.gain.value=0.5;
+    peak.connect(g); g.connect(audio.getMaster());
+    src.start();
+    srcRef.current=src; nodesRef.current=[peak];
+
+    // 게인을 0 → 점점 키워서 하울링이 "올라오는" 느낌
+    let db=0;
+    rampRef.current=setInterval(()=>{
+      db+=1.2;
+      if(db>30) db=30; // 상한
+      try{ peak.gain.value=db; }catch(e){}
+    },120);
+    setRunning(true);
+  };
+
+  const newRound=()=>{
+    const f=freqs[Math.floor(Math.random()*freqs.length)];
+    setTarget(f); setUserIdx(null); setResult(null);
+    bufRef.current=null; stopAudio();
+  };
+
+  const submit=()=>{
+    if(target==null||userIdx==null) return;
+    const ansIdx=freqs.indexOf(target);
+    // 인접 1밴드까지 정답 인정 (현장에서도 근처면 잡음)
+    const ok=Math.abs(userIdx-ansIdx)<=1;
+    setResult({ok,exact:userIdx===ansIdx,answer:target});
+    addScore(ok); stopAudio();
+  };
+
+  useEffect(()=>{ return ()=>stopAudio(); },[]);
+  useEffect(()=>{ newRound(); },[bandSet]);
+
+  return (
+    <div style={{padding:16}}>
+      <div style={S.card}>
+        <div style={S.label}>⑤ 피드백(하울링) 주파수 찾기</div>
+        <div style={{fontSize:12,color:"#776"}}>재생하면 특정 대역이 점점 울립니다. 어느 주파수인지 찾으세요</div>
+      </div>
+
+      <div style={S.card}>
+        <div style={S.label}>밴드</div>
+        <Segmented options={[{value:10,label:"10밴드"},{value:31,label:"31밴드"}]} value={bandSet} onChange={setBandSet}/>
+      </div>
+
+      <div style={S.card}>
+        <Btn accent onClick={()=>running?stopAudio():start(target)} style={{marginBottom:8}}>
+          {running?"■ 정지":"▶ 하울링 재생"}
+        </Btn>
+        <Btn onClick={newRound}>새 라운드 (다른 주파수)</Btn>
+        {running&&<div style={{fontSize:11,color:"#ff6666",marginTop:4}}>◉ 하울링 상승 중... 빨리 찾아서 정지!</div>}
+      </div>
+
+      <div style={S.card}>
+        <div style={S.label}>울리는 대역 — 그래프 드래그 또는 슬라이더</div>
+        <FRGraph freqs={freqs} selIdx={userIdx} gain={userIdx==null?0:12} q={18}
+          onPick={(i)=>setUserIdx(i)} height={140}/>
+        <FreqSlider freqs={freqs} idx={userIdx} onChange={(i)=>setUserIdx(i)}/>
+        <div style={{fontSize:15,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
+          {userIdx==null?"대역 미선택":fmtFreq(freqs[userIdx])}
+        </div>
+      </div>
+
+      {result&&(
+        <div style={S.result(result.ok)}>
+          {result.ok?(result.exact?"✓ 정확히 맞춤!":"✓ 정답! (인접 대역 허용)"):"✗ 오답."}
+          <div style={{marginTop:6,fontSize:12}}>정답: {fmtFreq(result.answer)}</div>
+        </div>
+      )}
+      {!result
+        ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
+        : <Btn accent onClick={newRound}>다음 라운드 →</Btn>}
+    </div>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════
 // 공유 파일 업로더 (로딩바 포함)
 // ════════════════════════════════════════════════════════════════
 function FileUploader({sharedFile, audio}) {
@@ -1109,6 +1223,7 @@ const TABS=[
   {id:"pink",icon:"⋯",label:"노이즈EQ"},
   {id:"music",icon:"♫",label:"음원EQ"},
   {id:"effects",icon:"◈",label:"이펙터"},
+  {id:"feedback",icon:"◭",label:"피드백"},
 ];
 
 export default function App() {
@@ -1164,6 +1279,7 @@ export default function App() {
         {tab==="pink"&&<PinkNoiseTab addScore={addScore} audio={audio}/>}
         {tab==="music"&&<MusicEQTab addScore={addScore} audio={audio} sharedFile={sharedFile}/>}
         {tab==="effects"&&<EffectsTab addScore={addScore} audio={audio} sharedFile={sharedFile}/>}
+        {tab==="feedback"&&<FeedbackTab addScore={addScore} audio={audio}/>}
       </div>
 
       {/* 카피라이트 */}
