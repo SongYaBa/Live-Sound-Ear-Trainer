@@ -141,8 +141,13 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true,
     ctx.clearRect(0,0,W,H);
     const n=freqs.length, bw=W/n;
     for(let i=0;i<n;i++){
-      ctx.fillStyle = (i===selIdx)? "rgba(217,119,87,0.18)":(i===ansIdx?"rgba(76,175,80,0.15)":"rgba(255,255,255,0.02)");
+      // base
+      ctx.fillStyle = "rgba(255,255,255,0.02)";
       ctx.fillRect(i*bw,0,bw-1,H);
+      // 선택 칸(주황) — 먼저
+      if(i===selIdx){ ctx.fillStyle="rgba(217,119,87,0.22)"; ctx.fillRect(i*bw,0,bw-1,H); }
+      // 정답 칸(초록) — 위에 겹쳐 칠해 같은 칸이면 색이 섞임
+      if(i===ansIdx){ ctx.fillStyle="rgba(76,175,80,0.3)"; ctx.fillRect(i*bw,0,bw-1,H); }
     }
     ctx.strokeStyle="rgba(217,119,87,0.08)"; ctx.lineWidth=1;
     [-12,-6,0,6,12].forEach(db=>{ const y=H/2-(db/16)*(H/2-8); ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); });
@@ -307,9 +312,9 @@ const S = {
     opacity: disabled?0.4:1, transition:"all 0.15s", width:"100%", marginBottom:8,
   }),
   result: (kind) => {
-    // kind: "ok"(정답 초록) | "near"(근사 노랑) | "no"(오답 빨강)
-    const col = kind==="ok"?"#4caf50":kind==="near"?"#e0b020":"#ff6666";
-    const bg = kind==="ok"?"rgba(76,175,80,0.1)":kind==="near"?"rgba(224,176,32,0.1)":"rgba(255,60,60,0.08)";
+    // kind: "ok"(정답 초록) | "near"(근사 노랑) | "near2"(반의반절 주황) | "no"(오답 빨강)
+    const col = kind==="ok"?"#4caf50":kind==="near"?"#e0b020":kind==="near2"?"#d98a3a":"#ff6666";
+    const bg = kind==="ok"?"rgba(76,175,80,0.1)":kind==="near"?"rgba(224,176,32,0.1)":kind==="near2"?"rgba(217,138,58,0.1)":"rgba(255,60,60,0.08)";
     return {
       padding:"14px 16px", borderRadius:8, fontSize:15,
       background:bg, border:`1px solid ${col}`, color:col, marginBottom:12,
@@ -419,10 +424,7 @@ function SineTab({addScore, resetScore, audio}) {
   const submit=()=>{
     if(!guess||!target) return;
     const gi=freqs.indexOf(guess), ti=freqs.indexOf(target);
-    let kind,pts;
-    if(gi===ti){ kind="ok"; pts=1; }
-    else if(Math.abs(gi-ti)<=1){ kind="near"; pts=0.5; }
-    else { kind="no"; pts=0; }
+    const {grade:kind, pts} = freqProximity(gi, ti, freqs.length);
     setResult({kind,target,guess});
     addScore(pts);
   };
@@ -461,7 +463,7 @@ function SineTab({addScore, resetScore, audio}) {
         : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
       {result&&(
         <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
-          {result.kind==="ok"?"✓ 정답! (+1점)":result.kind==="near"?"△ 근사값 (+0.5점)":"✗ 오답."}
+          {result.kind==="ok"?`✓ 정답! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:"✗ 오답."}
           {" 정답: "}<strong>{fmtFreq(result.target)}</strong>
           {result.kind!=="ok"&&<> | 선택: {fmtFreq(result.guess)}</>}
         </div>
@@ -763,12 +765,14 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
     if(!qBands||userIdx==null) return;
     const ans=qBands[0];
     const ansIdx=freqs.indexOf(ans.freq);
-    const freqExact=userIdx===ansIdx;
-    const freqNear=Math.abs(userIdx-ansIdx)<=1;
+    const fp=freqProximity(userIdx, ansIdx, freqs.length); // 주파수 근접 등급
+    const freqExact=fp.grade==="ok";
+    const freqNear=fp.grade==="near"||fp.grade==="near2";
     const gainErr=Math.abs(userGain-ans.gain);
+    const gainTol=(diff==="hard"||diff==="extra")?3:6;
     let kind,pts;
     if(freqExact&&gainErr===0){ kind="ok"; pts=1; }
-    else if(freqNear&&gainErr<=(diff==="hard"||diff==="extra"?3:6)){ kind="near"; pts=0.5; }
+    else if(freqNear&&gainErr<=gainTol){ kind=fp.grade; pts=fp.pts; } // near 또는 near2
     else { kind="no"; pts=0; }
     setResult({kind,freqExact,freqNear,gainErr,answer:ans});
     addScore(pts); stopAudio();
@@ -825,7 +829,7 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
             : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
           {result&&(
             <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
-              {result.kind==="ok"?"✓ 정답! (+1점)":result.kind==="near"?"△ 근사값 정답 (+0.5점)":"✗ 오답."}
+              {result.kind==="ok"?`✓ 정답! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:"✗ 오답."}
               {result.kind!=="ok"&&<span style={{fontSize:13}}> {result.freqExact?"주파수 정확":result.freqNear?"주파수 인접":"주파수 틀림"} · 레벨오차 {result.gainErr}dB</span>}
               <div style={{marginTop:6,fontSize:14}}>
                 정답: {result.answer.freq>=1000?`${result.answer.freq/1000}kHz`:`${result.answer.freq}Hz`} {result.answer.gain>0?"+":""}{result.answer.gain}dB
@@ -1064,7 +1068,7 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
           {selected&&<Btn accent onClick={newQ}>다음 문제 →</Btn>}
           {selected&&(
             <div style={{...S.result(selected.name===q.name?"ok":"no"),marginTop:12,marginBottom:0}}>
-              {selected.name===q.name?"✓ 정답! (+1점)":"✗ 오답. 정답: "+q.name}
+              {selected.name===q.name?`✓ 정답! (+${fmtPt(PER_Q)}점)`:"✗ 오답. 정답: "+q.name}
             </div>
           )}
         </>
@@ -1171,10 +1175,7 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
   const submit=()=>{
     if(target==null||userIdx==null) return;
     const ansIdx=freqs.indexOf(target);
-    const exact=userIdx===ansIdx;
-    const near=Math.abs(userIdx-ansIdx)<=1;
-    const kind=exact?"ok":near?"near":"no";
-    const pts=exact?1:near?0.5:0;
+    const {grade:kind, pts} = freqProximity(userIdx, ansIdx, freqs.length);
     setResult({kind,answer:target});
     addScore(pts); stopAudio();
   };
@@ -1245,7 +1246,7 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
         : <Btn accent onClick={newRound}>다음 라운드 →</Btn>}
       {result&&(
         <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
-          {result.kind==="ok"?"✓ 정확히 맞춤! (+1점)":result.kind==="near"?"△ 근사값 정답 (+0.5점)":(result.timeout?"✗ 시간 초과!":"✗ 오답.")}
+          {result.kind==="ok"?`✓ 정확히 맞춤! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:(result.timeout?"✗ 시간 초과!":"✗ 오답.")}
           <div style={{marginTop:6,fontSize:14}}>정답: {fmtFreq(result.answer)}</div>
         </div>
       )}
@@ -1455,7 +1456,22 @@ const TABS=[
   {id:"effects",icon:"◈",label:"이펙터"},
   {id:"feedback",icon:"◭",label:"피드백"},
 ];
-const MAX_Q = 10; // 10문제 = 100점 만점
+const MAX_Q = 20; // 20문제 = 100점 만점
+const PER_Q = 100/MAX_Q;            // 문제당 만점 (정답)
+const PER_Q_NEAR = PER_Q/2;         // 근사값(인접) 점수
+const PER_Q_NEAR2 = PER_Q/4;        // 반의 반절(2칸) 점수
+const fmtPt = v => Number.isInteger(v)?`${v}`:(+v.toFixed(2)).toString(); // 5 / 2.5 / 1.25 표기
+
+// 주파수 인접 정도로 근사 등급 산정.
+// 10밴드: ±1칸=절반(near). 31밴드: ±1칸=절반(near), ±2칸=반의반절(near2). 그 외 오답.
+// 반환: {grade, pts}  grade: "ok"|"near"|"near2"|"no"
+function freqProximity(userIdx, ansIdx, bandCount){
+  const d = Math.abs(userIdx-ansIdx);
+  if(d===0) return {grade:"ok", pts:1};
+  if(d===1) return {grade:"near", pts:0.5};
+  if(d===2 && bandCount>=31) return {grade:"near2", pts:0.25};
+  return {grade:"no", pts:0};
+}
 
 export default function App() {
   const [tab,setTab]=useState("sine");
@@ -1518,7 +1534,7 @@ export default function App() {
   const resetScore=(part)=>setScores(s=>({...s,[part]:{ok:0,total:0}}));
 
   const cur = scores[tab];
-  const pts = Math.round((cur.ok/MAX_Q)*100);
+  const pts = fmtPt(+((cur.ok/MAX_Q)*100).toFixed(2));
 
   return (
     <div style={S.page}>
