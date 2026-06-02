@@ -215,7 +215,7 @@ function HoldButton({onStart,onEnd,children}) {
       onMouseDown={start} onMouseUp={end} onMouseLeave={()=>{ if(down) end(); }}
       onTouchStart={start} onTouchEnd={end}
       style={{
-        width:"100%",padding:"12px 18px",fontSize:13,fontFamily:"inherit",borderRadius:8,
+        width:"100%",padding:"14px 18px",fontSize:15,fontFamily:"inherit",borderRadius:8,
         marginBottom:0,cursor:"pointer",transition:"all 0.08s",...NODRAG,
         background: down?AC:"rgba(255,255,255,0.06)",
         border: down?"1px solid "+AC:"1px solid rgba(255,255,255,0.1)",
@@ -660,13 +660,37 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
   const srcRef=useRef(null);
   const bufRef=useRef(null); // 핑크노이즈 버퍼
   const wasPlayingRef=useRef(false);
+  const posRef=useRef(0);        // 음원 내 현재 재생 위치(초, 절대)
+  const startedAtRef=useRef(0);  // 재생 시작한 ctx.currentTime
 
   const freqs = bandSet===10?EQ_10:EQ_31;
   const file = sharedFile.file;
   const musicReady = file && file.buffer;
   const ready = source==="pink" ? true : musicReady;
 
-  const stopAudio=()=>{try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);};
+  // 음원 루프 구간 [ls,le] 계산
+  const loopRange=(buffer)=>{
+    const dur=buffer.duration;
+    const ls=(file?.loopStart??0)*dur, le=(file?.loopEnd??1)*dur;
+    return (le>ls+0.05)?[ls,le]:[0,dur];
+  };
+
+  const stopAudio=()=>{
+    // 정지 시점의 재생 위치 저장 (음원만)
+    if(source==="music" && srcRef.current && playing){
+      const ctx=audio.getCtx();
+      const buffer=file.buffer;
+      const [ls,le]=loopRange(buffer);
+      const elapsed=ctx.currentTime-startedAtRef.current;
+      let pos=posRef.current+elapsed;
+      // 루프 구간 안에서 wrap
+      const span=le-ls;
+      while(pos>=le) pos-=span;
+      posRef.current=pos;
+    }
+    try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);
+    if(sharedFile.playheadRef) sharedFile.playheadRef.current.get=null;
+  };
 
   const play=async(bands)=>{
     stopAudio();
@@ -682,11 +706,13 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
     }
     const src=ctx.createBufferSource();
     src.buffer=buffer; src.loop=true;
-    // 음원이면 선택 구간만 루프
+    let startOffset=0;
     if(source==="music" && file){
-      const dur=buffer.duration;
-      const ls=(file.loopStart??0)*dur, le=(file.loopEnd??1)*dur;
-      if(le>ls+0.05){ src.loopStart=ls; src.loopEnd=le; }
+      const [ls,le]=loopRange(buffer);
+      src.loopStart=ls; src.loopEnd=le;
+      // 저장된 위치가 구간 밖이면 구간 시작으로
+      if(posRef.current<ls||posRef.current>=le) posRef.current=ls;
+      startOffset=posRef.current;
     }
     let prev=src;
     bands.forEach(({freq,gain,q=3})=>{
@@ -697,24 +723,31 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
     });
     const g=ctx.createGain(); g.gain.value=source==="pink"?0.5:0.8;
     prev.connect(g); g.connect(audio.getMaster());
-    if(source==="music" && file && src.loopStart>0) src.start(0, src.loopStart);
+    if(source==="music") src.start(0, startOffset);
     else src.start();
+    startedAtRef.current=ctx.currentTime;
     srcRef.current=src; setPlaying(true);
+    // 음원이면 플레이헤드 위치 계산 함수 등록 (0~1 비율)
+    if(source==="music" && file && sharedFile.playheadRef){
+      const [ls,le]=loopRange(buffer); const span=le-ls; const dur=buffer.duration;
+      sharedFile.playheadRef.current.get=()=>{
+        let pos=posRef.current+(audio.getCtx().currentTime-startedAtRef.current);
+        while(pos>=le) pos-=span;
+        return pos/dur;
+      };
+    }
   };
 
   const togglePlay=()=>{ if(playing) stopAudio(); else play(qBands); };
-  // 원본 토글 (음원/노이즈 공통) — 누르면 원본 재생/정지 토글
-  const [origPlaying,setOrigPlaying]=useState(false);
-  const toggleOrig=()=>{
-    if(origPlaying){ stopAudio(); setOrigPlaying(false); }
-    else { play([{freq:1000,gain:0}]); setOrigPlaying(true); }
-  };
+  // 원본 — 누르고 있는 동안만. 누르기 전 문제 재생 중이었으면 떼면 복귀
+  const holdStart=()=>{ wasPlayingRef.current=playing; play([{freq:1000,gain:0}]); };
+  const holdEnd=()=>{ if(wasPlayingRef.current){ play(qBands); } else { stopAudio(); } };
 
   const newQ=()=>{
     if(source==="pink") bufRef.current=null;
     setQBands(makeEqQuestion(freqs,diff,mode,qVal));
     setUserIdx(null); setUserGain(0);
-    setResult(null); stopAudio(); setOrigPlaying(false);
+    setResult(null); stopAudio(); posRef.current=0;
   };
 
   const submit=()=>{
@@ -724,13 +757,12 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
     const freqExact=userIdx===ansIdx;
     const freqNear=Math.abs(userIdx-ansIdx)<=1;
     const gainErr=Math.abs(userGain-ans.gain);
-    // 정답: 주파수 정확 + dB 정확 / 근사: 주파수 인접 또는 dB 약간 오차 / 오답
     let kind,pts;
     if(freqExact&&gainErr===0){ kind="ok"; pts=1; }
     else if(freqNear&&gainErr<=(diff==="hard"||diff==="extra"?3:6)){ kind="near"; pts=0.5; }
     else { kind="no"; pts=0; }
     setResult({kind,freqExact,freqNear,gainErr,answer:ans});
-    addScore(pts); stopAudio(); setOrigPlaying(false);
+    addScore(pts); stopAudio();
   };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
@@ -754,11 +786,9 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
         <>
           <div style={S.card}>
             <Btn accent onClick={togglePlay} style={{marginBottom:8}}>
-              {playing&&!origPlaying?"■ 재생 정지":"▶ 문제 재생"}
+              {playing?"■ 재생 정지":"▶ 문제 재생"}
             </Btn>
-            <Btn onClick={toggleOrig}>
-              {origPlaying?"■ 원본 정지":"▶ 원본"}
-            </Btn>
+            <HoldButton onStart={holdStart} onEnd={holdEnd}>원본 (누르는 동안)</HoldButton>
           </div>
 
           <div style={S.card}>
@@ -808,9 +838,32 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
   const [selected,setSelected]=useState(null);
   const [playing,setPlaying]=useState(false);
   const srcRef=useRef(null);
+  const posRef=useRef(0);
+  const startedAtRef=useRef(0);
+  const playingRef=useRef(false);
+  const wasEffectRef=useRef(false); // 원본 누르기 전 이펙터 재생 중이었나
   const file = sharedFile.file;
 
-  const stopAudio=()=>{try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);};
+  const loopRange=(buffer)=>{
+    const dur=buffer.duration;
+    const ls=(file?.loopStart??0)*dur, le=(file?.loopEnd??1)*dur;
+    return (le>ls+0.05)?[ls,le]:[0,dur];
+  };
+
+  const stopAudio=()=>{
+    if(srcRef.current && playingRef.current && file?.buffer){
+      const ctx=audio.getCtx();
+      const [ls,le]=loopRange(file.buffer);
+      const elapsed=ctx.currentTime-startedAtRef.current;
+      let pos=posRef.current+elapsed;
+      const span=le-ls;
+      while(pos>=le) pos-=span;
+      posRef.current=pos;
+    }
+    try{srcRef.current?.stop();}catch(e){}srcRef.current=null;
+    playingRef.current=false; setPlaying(false);
+    if(sharedFile.playheadRef) sharedFile.playheadRef.current.get=null;
+  };
 
   const makeImpulse=(ctx,dur=2.2,decay=2.5)=>{
     const rate=ctx.sampleRate, len=rate*dur;
@@ -834,6 +887,10 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
     if(ctx.state==="suspended") await ctx.resume();
     const src=ctx.createBufferSource();
     src.buffer=file.buffer; src.loop=true;
+    const [ls,le]=loopRange(file.buffer);
+    src.loopStart=ls; src.loopEnd=le;
+    if(posRef.current<ls||posRef.current>=le) posRef.current=ls;
+    const startOffset=posRef.current;
     const dest=audio.getMaster();
     const out=ctx.createGain(); out.gain.value=0.8;
     let last=src;
@@ -917,7 +974,17 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
     }
     if(last) last.connect(out);
     out.connect(dest);
-    src.start(); srcRef.current=src; setPlaying(true);
+    src.start(0, startOffset);
+    startedAtRef.current=ctx.currentTime;
+    srcRef.current=src; playingRef.current=true; setPlaying(true);
+    if(sharedFile.playheadRef){
+      const dur=file.buffer.duration; const span=le-ls;
+      sharedFile.playheadRef.current.get=()=>{
+        let pos=posRef.current+(audio.getCtx().currentTime-startedAtRef.current);
+        while(pos>=le) pos-=span;
+        return pos/dur;
+      };
+    }
   };
 
   const newQ=()=>{
@@ -934,10 +1001,16 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
     }
     const wrong=pool.slice(0,3).map(n=>({name:n}));
     setChoices([item,...wrong].sort(()=>Math.random()-0.5));
-    setQ(item); setSelected(null); stopAudio();
+    setQ(item); setSelected(null); stopAudio(); posRef.current=0;
   };
 
   const select=(c)=>{ if(selected) return; setSelected(c); addScore(c.name===q.name?1:0); stopAudio(); };
+
+  // 이펙터 소리 토글
+  const toggleEffect=()=>{ if(playing) stopAudio(); else playWithEffect(q.name); };
+  // 원본 hold: 누르는 동안 원본, 떼면 이펙터로 복귀(이펙터 재생 중이었으면)
+  const origStart=()=>{ wasEffectRef.current=playing; playWithEffect(null); };
+  const origEnd=()=>{ if(wasEffectRef.current){ playWithEffect(q.name); } else { stopAudio(); } };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
 
@@ -953,12 +1026,10 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
       {q&&(
         <>
           <div style={S.card}>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
-              <Btn accent onClick={()=>playWithEffect(q.name)} disabled={playing} style={{marginBottom:0}}>▶ 이펙터 소리</Btn>
-              <Btn onClick={()=>playWithEffect(null)} disabled={playing} style={{marginBottom:0}}>▶ 원본</Btn>
-            </div>
-            <Btn onClick={stopAudio} disabled={!playing}>■ 정지</Btn>
-            {playing&&<div style={{fontSize:11,color:AC}}>◉ 재생 중</div>}
+            <Btn accent onClick={toggleEffect} style={{marginBottom:8}}>
+              {playing?"■ 이펙터 정지":"▶ 이펙터 소리"}
+            </Btn>
+            <HoldButton onStart={origStart} onEnd={origEnd}>원본 (누르는 동안)</HoldButton>
           </div>
 
           <div style={{fontSize:12,color:"#776",margin:"4px 2px 10px"}}>지금 걸린 이펙터는?</div>
@@ -1189,9 +1260,10 @@ function computePeaks(buffer, n=300){
   return peaks;
 }
 
-// 파형 + 구간 선택 (좌/우 핸들 드래그)
-function WaveformSelector({buffer, loopStart, loopEnd, onChange}) {
+// 파형 + 구간 선택 (좌/우 핸들 드래그) + 실시간 플레이헤드
+function WaveformSelector({buffer, loopStart, loopEnd, onChange, playheadRef}) {
   const ref=useRef(null);
+  const headRef=useRef(null);
   const peaksRef=useRef(null);
   const dragRef=useRef(null); // "start" | "end" | null
 
@@ -1208,13 +1280,37 @@ function WaveformSelector({buffer, loopStart, loopEnd, onChange}) {
     for(let i=0;i<n;i++){
       const x=i*bw, h=peaks[i]*(H*0.9);
       const inLoop = x>=sX && x<=eX;
-      ctx.fillStyle = inLoop ? AC : "rgba(255,255,255,0.12)"; // 구간 밖은 음영
+      ctx.fillStyle = inLoop ? AC : "rgba(255,255,255,0.12)";
       ctx.fillRect(x, H/2-h/2, Math.max(1,bw-0.5), h);
     }
-    // 핸들
     ctx.fillStyle=AC;
     ctx.fillRect(sX-2,0,4,H); ctx.fillRect(eX-2,0,4,H);
   },[buffer,loopStart,loopEnd]);
+
+  // 플레이헤드 실시간 그리기 (오버레이 캔버스)
+  useEffect(()=>{
+    let raf;
+    const draw=()=>{
+      const c=headRef.current;
+      if(c){
+        const W=c.width,H=c.height,ctx=c.getContext("2d");
+        ctx.clearRect(0,0,W,H);
+        const get=playheadRef&&playheadRef.current&&playheadRef.current.get;
+        if(get){
+          const r=get(); // 0~1
+          if(r!=null && r>=0 && r<=1){
+            const x=r*W;
+            ctx.fillStyle="#fff"; ctx.fillRect(x-1,0,2,H);
+            ctx.fillStyle="#fff"; ctx.beginPath();
+            ctx.moveTo(x-4,0); ctx.lineTo(x+4,0); ctx.lineTo(x,6); ctx.closePath(); ctx.fill();
+          }
+        }
+      }
+      raf=requestAnimationFrame(draw);
+    };
+    raf=requestAnimationFrame(draw);
+    return ()=>cancelAnimationFrame(raf);
+  },[playheadRef]);
 
   const xToR=(clientX)=>{
     const rect=ref.current.getBoundingClientRect();
@@ -1236,72 +1332,106 @@ function WaveformSelector({buffer, loopStart, loopEnd, onChange}) {
   const up=()=>{ dragRef.current=null; };
 
   return (
-    <canvas ref={ref} width={600} height={70}
-      onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={up}
-      onTouchStart={down} onTouchMove={move} onTouchEnd={up}
-      style={{width:"100%",height:70,borderRadius:8,background:"rgba(0,0,0,0.4)",
-        display:"block",marginTop:8,touchAction:"none",cursor:"ew-resize"}} />
+    <div style={{position:"relative",marginTop:8}}>
+      <canvas ref={ref} width={600} height={70}
+        onMouseDown={down} onMouseMove={move} onMouseUp={up} onMouseLeave={up}
+        onTouchStart={down} onTouchMove={move} onTouchEnd={up}
+        style={{width:"100%",height:70,borderRadius:8,background:"rgba(0,0,0,0.4)",
+          display:"block",touchAction:"none",cursor:"ew-resize"}} />
+      <canvas ref={headRef} width={600} height={70}
+        style={{width:"100%",height:70,position:"absolute",top:0,left:0,pointerEvents:"none"}} />
+    </div>
   );
 }
 
 function FileUploader({sharedFile, audio}) {
   const {file,setFile}=sharedFile;
   const [progress,setProgress]=useState(0);
+  const [waveHidden,setWaveHidden]=useState(false);
 
-  const handleFile=async(e)=>{
-    const f=e.target.files[0];
-    if(!f) return;
+  const handleFile=(e)=>{
+    const f=e.target.files && e.target.files[0];
+    if(!f){ return; }
+    // ★ 제스처 직속에서 즉시 ctx 깨우기 (iOS 정책). 콜백 안에서 하면 무시됨
+    const ctx=audio.getCtx();
+    try{ ctx.resume(); }catch(err){}
+    // 무음 버퍼를 즉시 한번 재생해 컨텍스트를 확실히 활성화
+    try{
+      const s=ctx.createBufferSource();
+      s.buffer=ctx.createBuffer(1,1,ctx.sampleRate);
+      s.connect(ctx.destination); s.start(0);
+    }catch(err){}
+
     setFile({name:f.name,buffer:null,loading:true});
     setProgress(0);
-    try{
-      const ab = await new Promise((resolve,reject)=>{
-        const reader=new FileReader();
-        reader.onprogress=(ev)=>{ if(ev.lengthComputable) setProgress(Math.round(ev.loaded/ev.total*100)); };
-        reader.onload=()=>{ setProgress(100); resolve(reader.result); };
-        reader.onerror=()=>reject(reader.error);
-        reader.readAsArrayBuffer(f);
-      });
-      const ctx=audio.getCtx();
-      if(ctx.state==="suspended") await ctx.resume();
-      const buffer=await ctx.decodeAudioData(ab);
-      // 기본 구간: 전체
-      setFile({name:f.name,buffer,loading:false,loopStart:0,loopEnd:1});
-    }catch(err){
-      setFile({name:f.name,buffer:null,loading:false,error:true});
-    }
+
+    const reader=new FileReader();
+    reader.onprogress=(ev)=>{ if(ev.lengthComputable) setProgress(Math.round(ev.loaded/ev.total*100)); };
+    reader.onerror=()=>setFile({name:f.name,buffer:null,loading:false,error:true,errMsg:"파일 읽기 실패"});
+    reader.onload=async()=>{
+      setProgress(100);
+      try{
+        try{ if(ctx.state!=="running") await ctx.resume(); }catch(err){}
+        const ab=reader.result;
+        const buffer=await new Promise((resolve,reject)=>{
+          try{
+            const p=ctx.decodeAudioData(ab, resolve, reject);
+            if(p&&p.then) p.then(resolve).catch(reject);
+          }catch(err){ reject(err); }
+        });
+        setFile({name:f.name,buffer,loading:false,loopStart:0,loopEnd:1});
+      }catch(err){
+        setFile({name:f.name,buffer:null,loading:false,error:true,errMsg:"디코딩 실패: "+(err&&err.message||err)});
+      }
+    };
+    reader.readAsArrayBuffer(f);
   };
 
   return (
     <div>
-      <label style={{
-        display:"block",padding:"16px",textAlign:"center",
-        background:AC_SOFT,border:"1px dashed "+AC_BORDER,
-        borderRadius:8,cursor:"pointer",fontSize:14,
-      }}>
-        📁 음원 업로드 (MP3 / WAV / M4A)
-        <input type="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
-          onChange={handleFile} style={{display:"none"}} />
-      </label>
-
-      {file&&file.loading&&(
-        <div style={{marginTop:10}}>
-          <div style={{fontSize:12,color:"#cc9",marginBottom:4}}>⏳ 불러오는 중... {progress}%</div>
-          <div style={{height:6,background:"rgba(255,255,255,0.08)",borderRadius:3,overflow:"hidden"}}>
-            <div style={{height:"100%",width:progress+"%",background:AC,transition:"width 0.1s"}}/>
-          </div>
+      {/* 최상단 접기 토글 (파일 있을 때만, 오른쪽 정렬) */}
+      {file&&file.buffer&&(
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:waveHidden?0:8}}>
+          {waveHidden?<div style={{fontSize:12,color:AC,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,marginRight:8}}>✓ {file.name}</div>:<div/>}
+          <button onClick={()=>setWaveHidden(h=>!h)} style={{
+            fontSize:11,fontFamily:"inherit",padding:"4px 10px",borderRadius:5,cursor:"pointer",flexShrink:0,
+            background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.12)",color:"#998",
+          }}>{waveHidden?"▼ 펼치기":"▲ 접기"}</button>
         </div>
       )}
-      {file&&file.error&&<div style={{fontSize:13,color:"#ff6666",marginTop:8}}>✗ 재생 불가. 다른 음원(MP3/WAV)을 써보세요.</div>}
-      {file&&file.buffer&&(
-        <>
-          <div style={{fontSize:13,color:AC,marginTop:8}}>✓ {file.name}</div>
-          <WaveformSelector buffer={file.buffer}
-            loopStart={file.loopStart??0} loopEnd={file.loopEnd??1}
-            onChange={(s,en)=>setFile({...file,loopStart:s,loopEnd:en})}/>
-          <div style={{fontSize:11,color:"#776",marginTop:4}}>주황 구간만 반복 재생됩니다 · 좌우 핸들 드래그로 구간 조절</div>
-        </>
-      )}
-      {!file&&<div style={{fontSize:12,color:"#554",marginTop:8}}>저작권 없는 음원을 사용하세요</div>}
+
+      {!waveHidden&&(<>
+        <label style={{
+          display:"block",padding:"16px",textAlign:"center",
+          background:AC_SOFT,border:"1px dashed "+AC_BORDER,
+          borderRadius:8,cursor:"pointer",fontSize:14,
+        }}>
+          📁 음원 업로드 (MP3 / WAV / M4A)
+          <input type="file"
+            onChange={handleFile} style={{display:"none"}} />
+        </label>
+
+        {file&&file.loading&&(
+          <div style={{marginTop:10}}>
+            <div style={{fontSize:12,color:"#cc9",marginBottom:4}}>⏳ 불러오는 중... {progress}%</div>
+            <div style={{height:6,background:"rgba(255,255,255,0.08)",borderRadius:3,overflow:"hidden"}}>
+              <div style={{height:"100%",width:progress+"%",background:AC,transition:"width 0.1s"}}/>
+            </div>
+          </div>
+        )}
+        {file&&file.error&&<div style={{fontSize:13,color:"#ff6666",marginTop:8}}>✗ {file.errMsg||"재생 불가"}. 다른 음원(MP3/WAV)을 써보세요.</div>}
+        {file&&file.buffer&&(
+          <>
+            <div style={{fontSize:13,color:AC,marginTop:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {file.name}</div>
+            <WaveformSelector buffer={file.buffer}
+              loopStart={file.loopStart??0} loopEnd={file.loopEnd??1}
+              onChange={(s,en)=>setFile({...file,loopStart:s,loopEnd:en})}
+              playheadRef={sharedFile.playheadRef}/>
+            <div style={{fontSize:11,color:"#776",marginTop:4}}>주황 구간만 반복 재생됩니다 · 좌우 핸들 드래그로 구간 조절</div>
+          </>
+        )}
+        {!file&&<div style={{fontSize:12,color:"#554",marginTop:8}}>저작권 없는 음원을 사용하세요</div>}
+      </>)}
     </div>
   );
 }
@@ -1325,7 +1455,27 @@ export default function App() {
   const [file,setFile]=useState(null);
 
   const audio = useMaster(masterVol, muted);
-  const sharedFile={file,setFile};
+  const playheadRef = useRef({get:null}); // 현재 재생위치(0~1) 반환 함수 등록용
+  const sharedFile={file,setFile,playheadRef};
+
+  // iOS: 첫 사용자 입력(터치/클릭)에서 AudioContext를 깨워둔다
+  useEffect(()=>{
+    const wake=()=>{
+      try{
+        const ctx=audio.getCtx();
+        if(ctx.state!=="running") ctx.resume();
+        const s=ctx.createBufferSource();
+        s.buffer=ctx.createBuffer(1,1,ctx.sampleRate);
+        s.connect(ctx.destination); s.start(0);
+      }catch(e){}
+    };
+    document.addEventListener("touchend",wake,{once:true});
+    document.addEventListener("click",wake,{once:true});
+    return ()=>{
+      document.removeEventListener("touchend",wake);
+      document.removeEventListener("click",wake);
+    };
+  },[]);
 
   // 파트별 점수 추가 (10문제까지). pts: 1=정답, 0.5=근사, 0=오답
   const addScore=(part,pts)=>setScores(s=>{
