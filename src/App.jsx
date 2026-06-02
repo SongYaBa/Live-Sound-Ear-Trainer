@@ -7,23 +7,24 @@ const AC_BORDER = "rgba(217,119,87,0.5)";
 const AC_SOFT = "rgba(217,119,87,0.08)";
 
 // ─── 청음용 이펙터 ────────────────────────────────────────────────
+// desc: 수단→결과 구조의 메커니즘 한 줄 해설 (명사형 종결)
 const SOUND_EFFECTS = [
-  { name: "리버브 (Reverb)" },
-  { name: "딜레이 (Delay)" },
-  { name: "디스토션 (Distortion)" },
-  { name: "코러스 (Chorus)" },
-  { name: "플랜저 (Flanger)" },
-  { name: "페이저 (Phaser)" },
-  { name: "트레몰로 (Tremolo)" },
-  { name: "비브라토 (Vibrato)" },
-  { name: "오토패너 (Auto Pan)" },
-  { name: "비트크러셔 (Bitcrusher)" },
-  { name: "링모듈레이터 (Ring Mod)" },
-  { name: "와우 (Wah / Auto-Wah)" },
-  { name: "로우패스 필터 (LPF)" },
-  { name: "하이패스 필터 (HPF)" },
-  { name: "밴드패스 필터 (BPF)" },
-  { name: "노치 필터 (Notch)" },
+  { name: "리버브 (Reverb)", desc:"미세 지연된 다수 반사음 합산을 통한 공간 잔향 형성" },
+  { name: "딜레이 (Delay)", desc:"입력 신호의 일정 시간 지연·반복 재생을 통한 메아리 형성" },
+  { name: "디스토션 (Distortion)", desc:"신호 진폭의 의도적 클리핑을 통한 하모닉 왜곡 생성" },
+  { name: "코러스 (Chorus)", desc:"짧게 지연된 복제음의 피치 미세 변조·합산을 통한 음원 다중화" },
+  { name: "플랜저 (Flanger)", desc:"매우 짧은 가변 지연음 합산 시 발생하는 빗살무늬 간섭을 통한 휘몰아치는 음색 변조" },
+  { name: "페이저 (Phaser)", desc:"다단 올패스 필터의 위상 이동으로 생기는 노치 이동을 통한 쓸어내리는 음색 변조" },
+  { name: "트레몰로 (Tremolo)", desc:"LFO 신호 연동을 통한 출력 볼륨의 주기적 변화" },
+  { name: "비브라토 (Vibrato)", desc:"LFO 연동 지연시간 변조를 통한 피치의 주기적 흔들림" },
+  { name: "오토패너 (Auto Pan)", desc:"LFO 연동 좌우 정위 이동을 통한 음상의 주기적 패닝" },
+  { name: "비트크러셔 (Bitcrusher)", desc:"비트심도·샘플레이트 강제 저하를 통한 디지털 양자화 노이즈 생성" },
+  { name: "링모듈레이터 (Ring Mod)", desc:"입력과 캐리어 신호의 진폭 곱셈을 통한 비조화 금속성 음색 생성" },
+  { name: "와우 (Wah / Auto-Wah)", desc:"가변 대역통과 필터의 중심 주파수 이동을 통한 대역별 음색 변조" },
+  { name: "로우패스 필터 (LPF)", desc:"차단 주파수 이상 고역 감쇠를 통한 어둡고 둔탁한 음색 형성" },
+  { name: "하이패스 필터 (HPF)", desc:"차단 주파수 이하 저역 감쇠를 통한 얇고 가벼운 음색 형성" },
+  { name: "밴드패스 필터 (BPF)", desc:"특정 대역만 통과·양측 감쇠를 통한 전화기 같은 중역 집중 음색 형성" },
+  { name: "노치 필터 (Notch)", desc:"특정 협대역만 감쇠를 통한 좁은 구간 주파수 제거" },
 ];
 
 // 헷갈리기 쉬운 이펙터끼리 묶음 — 오답 보기는 같은 그룹에서 우선 추출
@@ -430,7 +431,7 @@ function SineTab({addScore, resetScore, audio}) {
   };
 
   useEffect(()=>{ return stop; },[]);
-  useEffect(()=>{ newQ(); },[octMode]);
+  useEffect(()=>{ resetScore(); newQ(); },[octMode]);
 
   return (
     <div style={{padding:16}}>
@@ -779,8 +780,11 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
   };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
-  // 옵션/소스 변경 시: 새 문제 (점수는 수동 초기화만)
-  useEffect(()=>{ hasPlayedRef.current=false; if(ready) newQ(); },[bandSet,mode,diff,qVal,source,musicReady]);
+  // 난이도/밴드/모드/소스 변경 시: 점수 초기화 + 새 문제
+  useEffect(()=>{ resetScore(); hasPlayedRef.current=false; if(ready) newQ(); },[bandSet,mode,diff,source,musicReady]);
+  // Q 팩터 변경 시: 새 문제만 (점수 유지)
+  const qInit=useRef(true);
+  useEffect(()=>{ if(qInit.current){ qInit.current=false; return; } if(ready) newQ(); },[qVal]);
 
   const curGain = userIdx==null?0:userGain;
 
@@ -847,6 +851,7 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
 // ④ 이펙터 청음 (공유 파일 사용)
 // ════════════════════════════════════════════════════════════════
 function EffectsTab({addScore, resetScore, audio, sharedFile}) {
+  const [source,setSource]=useState("pink"); // pink | music
   const [q,setQ]=useState(null);
   const [choices,setChoices]=useState([]);
   const [selected,setSelected]=useState(null);
@@ -856,18 +861,33 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
   const startedAtRef=useRef(0);
   const playingRef=useRef(false);
   const wasEffectRef=useRef(false); // 원본 누르기 전 이펙터 재생 중이었나
+  const pinkRef=useRef(null);       // 핑크노이즈 버퍼 캐시
   const file = sharedFile.file;
+
+  // 현재 소스에 쓸 버퍼 (pink=생성 버퍼, music=업로드 파일)
+  const getSrcBuffer=()=>{
+    if(source==="pink"){
+      if(!pinkRef.current) pinkRef.current=createPinkNoiseBuffer(audio.getCtx());
+      return pinkRef.current;
+    }
+    return file?.buffer||null;
+  };
+  // 소스 준비 여부 (pink은 항상 준비됨)
+  const srcReady = source==="pink" || !!(file&&file.buffer);
 
   const loopRange=(buffer)=>{
     const dur=buffer.duration;
+    // 핑크노이즈는 전체 루프, 음원은 사용자 지정 구간
+    if(source==="pink") return [0,dur];
     const ls=(file?.loopStart??0)*dur, le=(file?.loopEnd??1)*dur;
     return (le>ls+0.05)?[ls,le]:[0,dur];
   };
 
   const stopAudio=()=>{
-    if(srcRef.current && playingRef.current && file?.buffer){
+    const buf=getSrcBuffer();
+    if(srcRef.current && playingRef.current && buf){
       const ctx=audio.getCtx();
-      const [ls,le]=loopRange(file.buffer);
+      const [ls,le]=loopRange(buf);
       const elapsed=ctx.currentTime-startedAtRef.current;
       let pos=posRef.current+elapsed;
       const span=le-ls;
@@ -896,12 +916,13 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
 
   const playWithEffect=async(effectName)=>{
     stopAudio();
-    if(!file||!file.buffer) return;
+    const buf=getSrcBuffer();
+    if(!buf) return;
     const ctx=audio.getCtx();
     if(ctx.state==="suspended") await ctx.resume();
     const src=ctx.createBufferSource();
-    src.buffer=file.buffer; src.loop=true;
-    const [ls,le]=loopRange(file.buffer);
+    src.buffer=buf; src.loop=true;
+    const [ls,le]=loopRange(buf);
     src.loopStart=ls; src.loopEnd=le;
     if(posRef.current<ls||posRef.current>=le) posRef.current=ls;
     const startOffset=posRef.current;
@@ -991,8 +1012,8 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
     src.start(0, startOffset);
     startedAtRef.current=ctx.currentTime;
     srcRef.current=src; playingRef.current=true; setPlaying(true);
-    if(sharedFile.playheadRef){
-      const dur=file.buffer.duration; const span=le-ls;
+    if(source==="music" && sharedFile.playheadRef){
+      const dur=buf.duration; const span=le-ls;
       sharedFile.playheadRef.current.get=()=>{
         let pos=posRef.current+(audio.getCtx().currentTime-startedAtRef.current);
         while(pos>=le) pos-=span;
@@ -1027,14 +1048,18 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
   const origEnd=()=>{ if(wasEffectRef.current){ playWithEffect(q.name); } else { stopAudio(); } };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
+  // 소스(핑크/음원) 변경 시: 정지 + 점수·문제 초기화
+  useEffect(()=>{ stopAudio(); posRef.current=0; setQ(null); setSelected(null); setChoices([]); resetScore(); },[source]);
 
   return (
     <div style={{padding:16}}>
       <div style={S.card}>
         <div style={S.label}>④ 이펙터 청음 맞추기</div>
         <div style={{fontSize:12,color:"#776",marginBottom:12}}>걸린 이펙터를 듣고 맞추세요. 원본과 비교해보세요.</div>
-        <FileUploader sharedFile={sharedFile} audio={audio}/>
-        {file&&file.buffer&&<Btn accent onClick={newQ} style={{marginTop:8}}>문제 생성</Btn>}
+        <Segmented options={[{value:"pink",label:"핑크노이즈"},{value:"music",label:"음원"}]} value={source} onChange={setSource}/>
+        {source==="music"&&<div style={{marginTop:10}}><FileUploader sharedFile={sharedFile} audio={audio}/></div>}
+        {srcReady&&<Btn accent onClick={newQ} style={{marginTop:10}}>문제 생성</Btn>}
+        {source==="music"&&!srcReady&&<div style={{fontSize:12,color:"#776",marginTop:8}}>음원을 업로드하면 문제를 생성할 수 있습니다</div>}
       </div>
 
       {q&&(
@@ -1069,6 +1094,9 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
           {selected&&(
             <div style={{...S.result(selected.name===q.name?"ok":"no"),marginTop:12,marginBottom:0}}>
               {selected.name===q.name?`✓ 정답! (+${fmtPt(PER_Q)}점)`:"✗ 오답. 정답: "+q.name}
+              <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,0.12)",fontSize:13,lineHeight:1.5,color:"#ddd"}}>
+                <strong style={{color:AC}}>{q.name}</strong><br/>{q.desc}
+              </div>
             </div>
           )}
         </>
@@ -1182,7 +1210,7 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
   // 밴드/난이도/소스 변경 시 새 라운드 (점수는 수동 초기화만)
-  useEffect(()=>{ if(ready) newRound(); },[bandSet,diff,source,musicReady]);
+  useEffect(()=>{ resetScore(); if(ready) newRound(); },[bandSet,diff,source,musicReady]);
 
   return (
     <div style={{padding:16}}>
@@ -1234,8 +1262,9 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
       <div style={S.card}>
         <div style={S.label}>울리는 대역 — 그래프 드래그 또는 슬라이더</div>
         <FRGraph freqs={freqs} selIdx={userIdx} gain={userIdx==null?0:12} q={18}
-          onPick={(i)=>setUserIdx(i)} height={150}/>
-        <FreqSlider freqs={freqs} idx={userIdx} onChange={(i)=>setUserIdx(i)}/>
+          ansIdx={result?freqs.indexOf(result.answer):null} ansGain={12}
+          onPick={(i)=>{ if(result) return; setUserIdx(i); }} height={150}/>
+        <FreqSlider freqs={freqs} idx={userIdx} onChange={(i)=>{ if(result) return; setUserIdx(i); }}/>
         <div style={{fontSize:15,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
           {userIdx==null?"대역 미선택":fmtFreq(freqs[userIdx])}
         </div>
@@ -1524,13 +1553,14 @@ export default function App() {
     };
   },[]);
 
-  // 파트별 점수 추가 (10문제까지). pts: 1=정답, 0.5=근사, 0=오답
+  // 파트별 점수 추가 (20문제 만점). pts: 1=정답, 0.5=근사, 0.25=2칸, 0=오답
+  // 20문제를 모두 푼 뒤 다시 답하면 자동으로 새 세트(1문제부터)로 초기화.
   const addScore=(part,pts)=>setScores(s=>{
     const cur=s[part];
-    if(cur.total>=MAX_Q) return s;
+    if(cur.total>=MAX_Q) return {...s,[part]:{ok:pts,total:1}};
     return {...s,[part]:{ok:cur.ok+pts,total:cur.total+1}};
   });
-  // 파트 점수 초기화 (수동 리프레쉬용)
+  // 파트 점수 초기화
   const resetScore=(part)=>setScores(s=>({...s,[part]:{ok:0,total:0}}));
 
   const cur = scores[tab];
