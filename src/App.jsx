@@ -1526,9 +1526,9 @@ export default function App() {
       <div style={S.header}>
         {/* 타이틀 + (볼륨 아이콘 + 스코어) */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-          <div style={{minWidth:0,flex:1,marginRight:10}}>
+          <div style={{minWidth:0,flex:1,marginRight:12,overflow:"hidden"}}>
             <div style={{fontSize:10,color:AC,letterSpacing:3,marginBottom:2}}>EAR TRAINING</div>
-            <div style={{fontSize:"clamp(13px,4.6vw,18px)",fontWeight:"bold",letterSpacing:0.5,whiteSpace:"nowrap"}}>LIVE SOUND EAR TRAINER</div>
+            <div style={{fontSize:"clamp(12px,3.4vw,16px)",fontWeight:"bold",letterSpacing:0.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>LIVE SOUND EAR TRAINER</div>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
             <button onClick={()=>setVolOpen(v=>!v)} title="마스터 볼륨" style={{
