@@ -121,7 +121,7 @@ const LEVEL_STEPS = [-12,-6,-3,0,3,6,12];
 // selIdx: 선택된 밴드 인덱스 (없으면 null)
 // gain: 현재 dB (그래프에 봉우리 표시용)
 // onPick: (idx) => void
-function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true}) {
+function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true, ansIdx=null, ansGain=0}) {
   const ref=useRef(null);
   const draggingRef=useRef(false);
 
@@ -140,29 +140,30 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true}
     const W=canvas.width,H=canvas.height,ctx=canvas.getContext("2d");
     ctx.clearRect(0,0,W,H);
     const n=freqs.length, bw=W/n;
-    // 세로 칸 그리드
     for(let i=0;i<n;i++){
-      ctx.fillStyle = (i===selIdx)? "rgba(217,119,87,0.18)":"rgba(255,255,255,0.02)";
+      ctx.fillStyle = (i===selIdx)? "rgba(217,119,87,0.18)":(i===ansIdx?"rgba(76,175,80,0.15)":"rgba(255,255,255,0.02)");
       ctx.fillRect(i*bw,0,bw-1,H);
     }
-    // dB 그리드 라인
     ctx.strokeStyle="rgba(217,119,87,0.08)"; ctx.lineWidth=1;
     [-12,-6,0,6,12].forEach(db=>{ const y=H/2-(db/16)*(H/2-8); ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); });
     ctx.strokeStyle="rgba(217,119,87,0.22)"; ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();
-    // 선택 밴드 봉우리 곡선
-    if(selIdx!=null){
-      const cf=freqs[selIdx];
-      ctx.strokeStyle=gain<0?"#ff6666":AC; ctx.lineWidth=2.5; ctx.shadowColor=gain<0?"#ff6666":AC; ctx.shadowBlur=8;
+    // 봉우리 곡선 그리기 헬퍼
+    const drawPeak=(idx,g,color)=>{
+      ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.shadowColor=color; ctx.shadowBlur=8;
       ctx.beginPath();
       for(let px=0;px<W;px++){
         const bandIdx=Math.floor(px/bw);
-        const dist=Math.abs(bandIdx-selIdx);
-        const db = gain*Math.exp(-(dist*dist)/(2*(0.8+8/q)));
+        const dist=Math.abs(bandIdx-idx);
+        const db = g*Math.exp(-(dist*dist)/(2*(0.8+8/q)));
         const y=H/2-(db/16)*(H/2-8);
         px===0?ctx.moveTo(px,y):ctx.lineTo(px,y);
       }
       ctx.stroke(); ctx.shadowBlur=0;
-    }
+    };
+    // 정답 봉우리 (초록) 먼저
+    if(ansIdx!=null) drawPeak(ansIdx, ansGain, "#4caf50");
+    // 내 답 봉우리 (주황/빨강)
+    if(selIdx!=null) drawPeak(selIdx, gain, gain<0?"#ff6666":AC);
     // 주파수 라벨 — 10밴드 기준(63,125,250,500,1k,2k,4k,8k,16k) 우선 표시
     ctx.fillStyle="rgba(255,220,200,0.8)"; ctx.font="bold 11px monospace"; ctx.textAlign="center";
     const KEY=[31.5,63,125,250,500,1000,2000,4000,8000,16000];
@@ -186,7 +187,7 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true}
       ctx.fillStyle=AC; ctx.font="bold 18px monospace"; ctx.textAlign="center";
       ctx.fillText(l, W/2, 22);
     }
-  },[freqs,selIdx,gain,q]);
+  },[freqs,selIdx,gain,q,ansIdx,ansGain]);
 
   return (
     <canvas ref={ref} width={600} height={height}
@@ -451,16 +452,16 @@ function SineTab({addScore, resetScore, audio}) {
         </div>
       </div>
 
+      {!result
+        ? <Btn accent onClick={submit} disabled={!guess}>정답 제출</Btn>
+        : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
       {result&&(
-        <div style={S.result(result.kind)}>
+        <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
           {result.kind==="ok"?"✓ 정답! (+1점)":result.kind==="near"?"△ 근사값 (+0.5점)":"✗ 오답."}
           {" 정답: "}<strong>{fmtFreq(result.target)}</strong>
           {result.kind!=="ok"&&<> | 선택: {fmtFreq(result.guess)}</>}
         </div>
       )}
-      {!result
-        ? <Btn accent onClick={submit} disabled={!guess}>정답 제출</Btn>
-        : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
     </div>
   );
 }
@@ -738,16 +739,20 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
     }
   };
 
-  const togglePlay=()=>{ if(playing) stopAudio(); else play(qBands); };
+  const hasPlayedRef=useRef(false);
+  const togglePlay=()=>{ if(playing) stopAudio(); else { hasPlayedRef.current=true; play(qBands); } };
   // 원본 — 누르고 있는 동안만. 누르기 전 문제 재생 중이었으면 떼면 복귀
   const holdStart=()=>{ wasPlayingRef.current=playing; play([{freq:1000,gain:0}]); };
   const holdEnd=()=>{ if(wasPlayingRef.current){ play(qBands); } else { stopAudio(); } };
 
   const newQ=()=>{
     if(source==="pink") bufRef.current=null;
-    setQBands(makeEqQuestion(freqs,diff,mode,qVal));
+    const bands=makeEqQuestion(freqs,diff,mode,qVal);
+    setQBands(bands);
     setUserIdx(null); setUserGain(0);
     setResult(null); stopAudio(); posRef.current=0;
+    // 한 번이라도 재생했으면 새 문제 자동 재생
+    if(hasPlayedRef.current) setTimeout(()=>play(bands),60);
   };
 
   const submit=()=>{
@@ -767,7 +772,7 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
   // 옵션/소스 변경 시: 점수 초기화 + 새 문제
-  useEffect(()=>{ resetScore(); if(ready) newQ(); },[bandSet,mode,diff,qVal,source,musicReady]);
+  useEffect(()=>{ resetScore(); hasPlayedRef.current=false; if(ready) newQ(); },[bandSet,mode,diff,qVal,source,musicReady]);
 
   const curGain = userIdx==null?0:userGain;
 
@@ -794,7 +799,8 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
           <div style={S.card}>
             <div style={S.label}>① 주파수 — 그래프 드래그 또는 슬라이더</div>
             <FRGraph freqs={freqs} selIdx={userIdx} gain={curGain} q={qVal}
-              onPick={(i)=>{ setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}
+              ansIdx={result?freqs.indexOf(result.answer.freq):null} ansGain={result?result.answer.gain:0}
+              onPick={(i)=>{ if(result) return; setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}
               height={150}/>
             <FreqSlider freqs={freqs} idx={userIdx}
               onChange={(i)=>{ setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}/>
@@ -810,8 +816,11 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
             </div>
           )}
 
+          {!result
+            ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
+            : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
           {result&&(
-            <div style={S.result(result.kind)}>
+            <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
               {result.kind==="ok"?"✓ 정답! (+1점)":result.kind==="near"?"△ 근사값 정답 (+0.5점)":"✗ 오답."}
               {result.kind!=="ok"&&<span style={{fontSize:13}}> {result.freqExact?"주파수 정확":result.freqNear?"주파수 인접":"주파수 틀림"} · 레벨오차 {result.gainErr}dB</span>}
               <div style={{marginTop:6,fontSize:14}}>
@@ -819,9 +828,6 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
               </div>
             </div>
           )}
-          {!result
-            ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
-            : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
         </>
       )}
     </div>
@@ -1051,12 +1057,12 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
             })}
           </div>
 
+          {selected&&<Btn accent onClick={newQ}>다음 문제 →</Btn>}
           {selected&&(
-            <div style={S.result(selected.name===q.name?"ok":"no")}>
+            <div style={{...S.result(selected.name===q.name?"ok":"no"),marginTop:12,marginBottom:0}}>
               {selected.name===q.name?"✓ 정답! (+1점)":"✗ 오답. 정답: "+q.name}
             </div>
           )}
-          {selected&&<Btn accent onClick={newQ}>다음 문제 →</Btn>}
         </>
       )}
     </div>
@@ -1230,15 +1236,15 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
         </div>
       </div>
 
+      {!result
+        ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
+        : <Btn accent onClick={newRound}>다음 라운드 →</Btn>}
       {result&&(
-        <div style={S.result(result.kind)}>
+        <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
           {result.kind==="ok"?"✓ 정확히 맞춤! (+1점)":result.kind==="near"?"△ 근사값 정답 (+0.5점)":(result.timeout?"✗ 시간 초과!":"✗ 오답.")}
           <div style={{marginTop:6,fontSize:14}}>정답: {fmtFreq(result.answer)}</div>
         </div>
       )}
-      {!result
-        ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
-        : <Btn accent onClick={newRound}>다음 라운드 →</Btn>}
       </>)}
     </div>
   );
