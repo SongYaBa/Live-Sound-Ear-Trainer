@@ -121,7 +121,7 @@ const LEVEL_STEPS = [-12,-6,-3,0,3,6,12];
 // selIdx: 선택된 밴드 인덱스 (없으면 null)
 // gain: 현재 dB (그래프에 봉우리 표시용)
 // onPick: (idx) => void
-function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true, ansIdx=null, ansGain=0}) {
+function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true, ansIdx=null, ansGain=0, bandsOnly=false}) {
   const ref=useRef(null);
   const draggingRef=useRef(false);
 
@@ -160,10 +160,13 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true,
       }
       ctx.stroke(); ctx.shadowBlur=0;
     };
-    // 정답 봉우리 (초록) 먼저
-    if(ansIdx!=null) drawPeak(ansIdx, ansGain, "#4caf50");
-    // 내 답 봉우리 (주황/빨강)
-    if(selIdx!=null) drawPeak(selIdx, gain, gain<0?"#ff6666":AC);
+    // bandsOnly 모드(사인파)에서는 곡선/라인 없이 밴드 칸 하이라이트만 사용
+    if(!bandsOnly){
+      // 정답 봉우리 (초록) 먼저
+      if(ansIdx!=null) drawPeak(ansIdx, ansGain, "#4caf50");
+      // 내 답 봉우리 (주황/빨강)
+      if(selIdx!=null) drawPeak(selIdx, gain, gain<0?"#ff6666":AC);
+    }
     // 주파수 라벨 — 10밴드 기준(63,125,250,500,1k,2k,4k,8k,16k) 우선 표시
     ctx.fillStyle="rgba(255,220,200,0.8)"; ctx.font="bold 11px monospace"; ctx.textAlign="center";
     const KEY=[31.5,63,125,250,500,1000,2000,4000,8000,16000];
@@ -187,7 +190,7 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true,
       ctx.fillStyle=AC; ctx.font="bold 18px monospace"; ctx.textAlign="center";
       ctx.fillText(l, W/2, 22);
     }
-  },[freqs,selIdx,gain,q,ansIdx,ansGain]);
+  },[freqs,selIdx,gain,q,ansIdx,ansGain,bandsOnly]);
 
   return (
     <canvas ref={ref} width={600} height={height}
@@ -425,7 +428,7 @@ function SineTab({addScore, resetScore, audio}) {
   };
 
   useEffect(()=>{ return stop; },[]);
-  useEffect(()=>{ resetScore(); newQ(); },[octMode]);
+  useEffect(()=>{ newQ(); },[octMode]);
 
   return (
     <div style={{padding:16}}>
@@ -443,10 +446,11 @@ function SineTab({addScore, resetScore, audio}) {
       <div style={S.card}>
         <div style={S.label}>주파수 — 그래프 드래그 또는 슬라이더로 선택</div>
         <FRGraph freqs={freqs} selIdx={guess==null?null:freqs.indexOf(guess)} gain={guess!=null?10:0} q={6}
-          onPick={(i)=>{ const f=freqs[i]; setGuess(f); }}
+          ansIdx={result?freqs.indexOf(result.target):null} bandsOnly
+          onPick={(i)=>{ if(result) return; const f=freqs[i]; setGuess(f); }}
           height={140}/>
         <FreqSlider freqs={freqs} idx={guess==null?null:freqs.indexOf(guess)}
-          onChange={(i)=>{ const f=freqs[i]; setGuess(f); }}/>
+          onChange={(i)=>{ if(result) return; const f=freqs[i]; setGuess(f); }}/>
         <div style={{fontSize:15,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
           {guess==null?"대역 미선택":fmtFreq(guess)}
         </div>
@@ -771,8 +775,8 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
   };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
-  // 옵션/소스 변경 시: 점수 초기화 + 새 문제
-  useEffect(()=>{ resetScore(); hasPlayedRef.current=false; if(ready) newQ(); },[bandSet,mode,diff,qVal,source,musicReady]);
+  // 옵션/소스 변경 시: 새 문제 (점수는 수동 초기화만)
+  useEffect(()=>{ hasPlayedRef.current=false; if(ready) newQ(); },[bandSet,mode,diff,qVal,source,musicReady]);
 
   const curGain = userIdx==null?0:userGain;
 
@@ -1077,7 +1081,7 @@ const FB_LABEL = { easy:"Easy(무제한)", normal:"Normal(20s)", hard:"Hard(10s)
 
 function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
   const [source,setSource]=useState("pink"); // pink | music
-  const [bandSet,setBandSet]=useState(31);
+  const [bandSet,setBandSet]=useState(10);
   const [diff,setDiff]=useState("easy");
   const [optHidden,setOptHidden]=useState(false);
   const [target,setTarget]=useState(null);
@@ -1176,8 +1180,8 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
   };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
-  // 밴드/난이도/소스 변경 시 점수 리셋 + 새 라운드
-  useEffect(()=>{ resetScore(); if(ready) newRound(); },[bandSet,diff,source,musicReady]);
+  // 밴드/난이도/소스 변경 시 새 라운드 (점수는 수동 초기화만)
+  useEffect(()=>{ if(ready) newRound(); },[bandSet,diff,source,musicReady]);
 
   return (
     <div style={{padding:16}}>
@@ -1458,6 +1462,7 @@ export default function App() {
   const [scores,setScores]=useState({sine:{ok:0,total:0},eq:{ok:0,total:0},effects:{ok:0,total:0},feedback:{ok:0,total:0}});
   const [masterVol,setMasterVol]=useState(0.8);
   const [muted,setMuted]=useState(false);
+  const [volOpen,setVolOpen]=useState(false); // 상단 볼륨바 기본 숨김
   const [file,setFile]=useState(null);
 
   const audio = useMaster(masterVol, muted);
@@ -1483,13 +1488,33 @@ export default function App() {
     };
   },[]);
 
+  // 탭 전환/복귀 시 AudioContext가 suspend 되어 소리가 끊기는 버그 방지.
+  // 화면 복귀 또는 창 포커스 시 컨텍스트를 다시 깨운다. (점수는 건드리지 않음)
+  useEffect(()=>{
+    const resume=()=>{
+      try{
+        const ctx=audio.getCtx();
+        if(ctx&&ctx.state==="suspended") ctx.resume();
+      }catch(e){}
+    };
+    const onVis=()=>{ if(document.visibilityState==="visible") resume(); };
+    document.addEventListener("visibilitychange",onVis);
+    window.addEventListener("focus",resume);
+    window.addEventListener("pageshow",resume);
+    return ()=>{
+      document.removeEventListener("visibilitychange",onVis);
+      window.removeEventListener("focus",resume);
+      window.removeEventListener("pageshow",resume);
+    };
+  },[]);
+
   // 파트별 점수 추가 (10문제까지). pts: 1=정답, 0.5=근사, 0=오답
   const addScore=(part,pts)=>setScores(s=>{
     const cur=s[part];
     if(cur.total>=MAX_Q) return s;
     return {...s,[part]:{ok:cur.ok+pts,total:cur.total+1}};
   });
-  // 파트 점수 초기화 (모드/난이도 변경 시)
+  // 파트 점수 초기화 (수동 리프레쉬용)
   const resetScore=(part)=>setScores(s=>({...s,[part]:{ok:0,total:0}}));
 
   const cur = scores[tab];
@@ -1499,36 +1524,49 @@ export default function App() {
     <div style={S.page}>
       {/* 헤더 */}
       <div style={S.header}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-          <div>
+        {/* 타이틀 + (볼륨 아이콘 + 스코어) */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{minWidth:0,flex:1,marginRight:10}}>
             <div style={{fontSize:10,color:AC,letterSpacing:3,marginBottom:2}}>EAR TRAINING</div>
-            <div style={{fontSize:19,fontWeight:"bold",letterSpacing:1}}>LIVE SOUND EAR TRAINER</div>
+            <div style={{fontSize:"clamp(13px,4.6vw,18px)",fontWeight:"bold",letterSpacing:0.5,whiteSpace:"nowrap"}}>LIVE SOUND EAR TRAINER</div>
           </div>
-          <div style={{
-            background:AC_SOFT,border:"1px solid "+AC_BORDER,borderRadius:10,
-            padding:"8px 14px",textAlign:"right",minWidth:74,
-          }}>
-            <div style={{fontSize:10,color:AC,letterSpacing:1}}>SCORE</div>
-            <div style={{fontSize:20,fontWeight:"bold"}}>
-              {pts}<span style={{color:"#665",fontSize:12}}>점</span>
-            </div>
-            <div style={{fontSize:10,color:"#665"}}>{cur.total}/{MAX_Q}문제</div>
+          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
+            <button onClick={()=>setVolOpen(v=>!v)} title="마스터 볼륨" style={{
+              width:30,height:30,flexShrink:0,padding:0,fontSize:13,fontFamily:"inherit",
+              borderRadius:6,cursor:"pointer",lineHeight:1,
+              background:volOpen?AC_DIM:"rgba(255,255,255,0.05)",
+              border:volOpen?"1px solid "+AC:(muted?"1px solid #ff3c3c":"1px solid rgba(255,255,255,0.12)"),
+              color:muted?"#ff6666":(volOpen?AC:"#998"),
+            }}>{muted?"🔇":"🔊"}</button>
+            <button onClick={()=>resetScore(tab)} title="눌러서 점수 초기화" style={{
+              background:AC_SOFT,border:"1px solid "+AC_BORDER,borderRadius:10,
+              padding:"8px 14px",textAlign:"right",minWidth:74,cursor:"pointer",
+              fontFamily:"inherit",color:"inherit",
+            }}>
+              <div style={{fontSize:10,color:AC,letterSpacing:1}}>SCORE ⟳</div>
+              <div style={{fontSize:20,fontWeight:"bold"}}>
+                {pts}<span style={{color:"#665",fontSize:12}}>점</span>
+              </div>
+              <div style={{fontSize:10,color:"#665"}}>{cur.total}/{MAX_Q}문제</div>
+            </button>
           </div>
         </div>
 
-        {/* 마스터 페이더 + 뮤트 */}
-        <div style={{display:"flex",alignItems:"center",gap:10}}>
-          <button onClick={()=>setMuted(m=>!m)} style={{
-            padding:"8px 14px",fontSize:13,fontFamily:"inherit",borderRadius:6,
-            background:muted?"rgba(255,60,60,0.15)":"rgba(255,255,255,0.05)",
-            border:muted?"1px solid #ff3c3c":"1px solid rgba(255,255,255,0.1)",
-            color:muted?"#ff6666":"#998",cursor:"pointer",whiteSpace:"nowrap",
-          }}>{muted?"🔇":"🔊"}</button>
-          <input type="range" min={0} max={1} step={0.01} value={masterVol}
-            onChange={e=>setMasterVol(+e.target.value)}
-            style={{flex:1,accentColor:AC,cursor:"pointer"}} />
-          <div style={{fontSize:12,color:"#998",minWidth:32,textAlign:"right"}}>{Math.round(masterVol*100)}</div>
-        </div>
+        {/* 볼륨 슬라이더 — 아이콘 누를 때만 펼침 */}
+        {volOpen&&(
+          <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
+            <button onClick={()=>setMuted(m=>!m)} style={{
+              padding:"6px 12px",fontSize:13,fontFamily:"inherit",borderRadius:6,
+              background:muted?"rgba(255,60,60,0.15)":"rgba(255,255,255,0.05)",
+              border:muted?"1px solid #ff3c3c":"1px solid rgba(255,255,255,0.1)",
+              color:muted?"#ff6666":"#998",cursor:"pointer",whiteSpace:"nowrap",
+            }}>{muted?"🔇 MUTE":"🔊"}</button>
+            <input type="range" min={0} max={1} step={0.01} value={masterVol}
+              onChange={e=>setMasterVol(+e.target.value)}
+              style={{flex:1,accentColor:AC,cursor:"pointer"}} />
+            <div style={{fontSize:12,color:"#998",minWidth:32,textAlign:"right"}}>{Math.round(masterVol*100)}</div>
+          </div>
+        )}
       </div>
 
       {/* 탭 콘텐츠 */}
