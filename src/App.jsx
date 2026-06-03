@@ -1,10 +1,28 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
 
-// ─── 테마 색상 (클로드 시그니처 주황) ─────────────────────────────
-const AC = "#d97757";          // accent orange
-const AC_DIM = "rgba(217,119,87,0.15)";
-const AC_BORDER = "rgba(217,119,87,0.5)";
-const AC_SOFT = "rgba(217,119,87,0.08)";
+// ─── 테마 색상 ─────────────────────────────────────────────────────
+// CSS 변수로 두어, Solo 모드에서 주황↔초록 전환을 루트에서 한 번에 처리.
+// (inline style은 var() 사용 가능 / canvas는 var() 불가 → 별도 PALETTE 사용)
+const AC = "var(--ac)";
+const AC_DIM = "var(--ac-dim)";
+const AC_BORDER = "var(--ac-border)";
+const AC_SOFT = "var(--ac-soft)";
+
+// 구체 색상값 (canvas 및 CSS 변수 주입용)
+const PALETTE = {
+  normal:{ ac:"#d97757", dim:"rgba(217,119,87,0.15)", border:"rgba(217,119,87,0.5)", soft:"rgba(217,119,87,0.08)" },
+  solo:{ ac:"#4caf72", dim:"rgba(76,175,114,0.15)", border:"rgba(76,175,114,0.5)", soft:"rgba(76,175,114,0.08)" },
+};
+// 현재 accent 구체값을 canvas 컴포넌트에 전달하기 위한 컨텍스트
+const ThemeCtx = createContext(PALETTE.normal.ac);
+const useAccent = ()=>useContext(ThemeCtx);
+// hex(#rrggbb) → rgba 문자열
+const hexA=(hex,a)=>{ const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; };
+// 이펙터 짧은 라벨 (괄호 앞 한글명만)
+const effectLabelShort=(name)=>name.split(" (")[0];
+// Solo 모드 on/off 컨텍스트 (탭들이 읽어 동작 변경: 기본 무음, 선택 주파수만 솔로 재생)
+const SoloCtx = createContext(false);
+const useSolo = ()=>useContext(SoloCtx);
 
 // ─── 청음용 이펙터 ────────────────────────────────────────────────
 // desc: 수단→결과 구조의 메커니즘 한 줄 해설 (명사형 종결)
@@ -54,6 +72,17 @@ const SINE_THIRD = [20,25,31.5,40,50,63,80,100,125,160,200,250,315,400,500,630,8
   1250,1600,2000,2500,3150,4000,5000,6300,8000,10000,12500,16000,20000];
 const fmtFreq=f=>f>=1000?`${(f/1000).toString().replace(/\.0$/,"")}kHz`:`${f}Hz`;
 
+// 가중 랜덤: 60Hz 미만 / 16kHz 초과 주파수는 출제 확률 1/3로 축소
+const freqWeight=f=>(f<60||f>16000)?1/3:1;
+// freqs 배열에서 가중치 반영해 인덱스 하나 선택
+function weightedFreqIndex(freqs){
+  const w=freqs.map(freqWeight);
+  const total=w.reduce((a,b)=>a+b,0);
+  let r=Math.random()*total;
+  for(let i=0;i<freqs.length;i++){ r-=w[i]; if(r<0) return i; }
+  return freqs.length-1;
+}
+
 // ─── 핑크노이즈 생성 ─────────────────────────────────────────────
 function createPinkNoiseBuffer(ctx) {
   const len = ctx.sampleRate * 3;
@@ -73,6 +102,7 @@ function createPinkNoiseBuffer(ctx) {
 // ─── EQ 커브 캔버스 ──────────────────────────────────────────────
 function EQCanvas({ bands, height = 80 }) {
   const ref = useRef(null);
+  const accent = useAccent();
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
@@ -80,7 +110,7 @@ function EQCanvas({ bands, height = 80 }) {
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0,0,W,H);
     const freqToX = f => (Math.log10(f/20)/Math.log10(20000/20))*W;
-    ctx.strokeStyle="rgba(217,119,87,0.08)"; ctx.lineWidth=1;
+    ctx.strokeStyle=hexA(accent,0.08); ctx.lineWidth=1;
     [63,125,250,500,1000,2000,4000,8000,16000].forEach(f=>{
       const x=freqToX(f); ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke();
     });
@@ -88,10 +118,10 @@ function EQCanvas({ bands, height = 80 }) {
       const y=H/2-(db/24)*(H/2-8);
       ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke();
     });
-    ctx.strokeStyle="rgba(217,119,87,0.25)"; ctx.lineWidth=1;
+    ctx.strokeStyle=hexA(accent,0.25); ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(0,H/2); ctx.lineTo(W,H/2); ctx.stroke();
-    ctx.strokeStyle=AC; ctx.lineWidth=2;
-    ctx.shadowColor=AC; ctx.shadowBlur=6; ctx.beginPath();
+    ctx.strokeStyle=accent; ctx.lineWidth=2;
+    ctx.shadowColor=accent; ctx.shadowBlur=6; ctx.beginPath();
     for(let px=0;px<W;px++){
       const freq=Math.pow(10,(px/W)*(Math.log10(20000)-Math.log10(20))+Math.log10(20));
       let db=0;
@@ -103,11 +133,11 @@ function EQCanvas({ bands, height = 80 }) {
       px===0?ctx.moveTo(px,y):ctx.lineTo(px,y);
     }
     ctx.stroke(); ctx.shadowBlur=0;
-    ctx.fillStyle="rgba(217,119,87,0.4)"; ctx.font="9px monospace"; ctx.textAlign="center";
+    ctx.fillStyle=hexA(accent,0.4); ctx.font="9px monospace"; ctx.textAlign="center";
     [{f:125,l:"125"},{f:500,l:"500"},{f:1000,l:"1k"},{f:4000,l:"4k"},{f:8000,l:"8k"}].forEach(({f,l})=>{
       ctx.fillText(l, freqToX(f), H-2);
     });
-  }, [bands]);
+  }, [bands, accent]);
   return (
     <canvas ref={ref} width={600} height={height}
       style={{width:"100%",height,borderRadius:8,background:"rgba(0,0,0,0.4)",display:"block"}} />
@@ -125,6 +155,7 @@ const LEVEL_STEPS = [-12,-6,-3,0,3,6,12];
 function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true, ansIdx=null, ansGain=0, bandsOnly=false}) {
   const ref=useRef(null);
   const draggingRef=useRef(false);
+  const accent=useAccent();
 
   const idxFromX=(clientX)=>{
     const rect=ref.current.getBoundingClientRect();
@@ -145,14 +176,14 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true,
       // base
       ctx.fillStyle = "rgba(255,255,255,0.02)";
       ctx.fillRect(i*bw,0,bw-1,H);
-      // 선택 칸(주황) — 먼저
-      if(i===selIdx){ ctx.fillStyle="rgba(217,119,87,0.22)"; ctx.fillRect(i*bw,0,bw-1,H); }
+      // 선택 칸(주황/초록) — 먼저
+      if(i===selIdx){ ctx.fillStyle=hexA(accent,0.22); ctx.fillRect(i*bw,0,bw-1,H); }
       // 정답 칸(초록) — 위에 겹쳐 칠해 같은 칸이면 색이 섞임
       if(i===ansIdx){ ctx.fillStyle="rgba(76,175,80,0.3)"; ctx.fillRect(i*bw,0,bw-1,H); }
     }
-    ctx.strokeStyle="rgba(217,119,87,0.08)"; ctx.lineWidth=1;
+    ctx.strokeStyle=hexA(accent,0.08); ctx.lineWidth=1;
     [-12,-6,0,6,12].forEach(db=>{ const y=H/2-(db/16)*(H/2-8); ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); });
-    ctx.strokeStyle="rgba(217,119,87,0.22)"; ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();
+    ctx.strokeStyle=hexA(accent,0.22); ctx.beginPath();ctx.moveTo(0,H/2);ctx.lineTo(W,H/2);ctx.stroke();
     // 봉우리 곡선 그리기 헬퍼
     const drawPeak=(idx,g,color)=>{
       ctx.strokeStyle=color; ctx.lineWidth=2.5; ctx.shadowColor=color; ctx.shadowBlur=8;
@@ -171,7 +202,7 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true,
       // 정답 봉우리 (초록) 먼저
       if(ansIdx!=null) drawPeak(ansIdx, ansGain, "#4caf50");
       // 내 답 봉우리 (주황/빨강)
-      if(selIdx!=null) drawPeak(selIdx, gain, gain<0?"#ff6666":AC);
+      if(selIdx!=null) drawPeak(selIdx, gain, gain<0?"#ff6666":accent);
     }
     // 주파수 라벨 — 10밴드 기준(63,125,250,500,1k,2k,4k,8k,16k) 우선 표시
     ctx.fillStyle="rgba(255,220,200,0.8)"; ctx.font="bold 11px monospace"; ctx.textAlign="center";
@@ -193,10 +224,10 @@ function FRGraph({freqs, selIdx, gain=0, q=3, onPick, height=120, showGain=true,
     // 선택된 대역 주파수를 크게 강조 표시
     if(selIdx!=null){
       const f=freqs[selIdx]; const l=f>=1000?`${f/1000}kHz`:`${f}Hz`;
-      ctx.fillStyle=AC; ctx.font="bold 18px monospace"; ctx.textAlign="center";
+      ctx.fillStyle=accent; ctx.font="bold 18px monospace"; ctx.textAlign="center";
       ctx.fillText(l, W/2, 22);
     }
-  },[freqs,selIdx,gain,q,ansIdx,ansGain,bandsOnly]);
+  },[freqs,selIdx,gain,q,ansIdx,ansGain,bandsOnly,accent]);
 
   return (
     <canvas ref={ref} width={600} height={height}
@@ -374,20 +405,23 @@ function useMaster(masterVol, muted) {
 // ① 사인파
 // ════════════════════════════════════════════════════════════════
 function SineTab({addScore, resetScore, audio}) {
+  const solo=useSolo();
   const [octMode,setOctMode]=useState("oct"); // oct=1옥타브 third=1/3옥타브
   const [target,setTarget]=useState(null);
   const [guess,setGuess]=useState(null);
   const [result,setResult]=useState(null);
   const [playing,setPlaying]=useState(false);
+  const [soloFreq,setSoloFreq]=useState(null); // solo 모드에서 현재 울리는 주파수
   const oscRef=useRef(null);
+  const gRef=useRef(null);
 
   const freqs = octMode==="oct"?SINE_OCT:SINE_THIRD;
 
-  const stop=()=>{ try{oscRef.current?.stop();}catch(e){} oscRef.current=null; setPlaying(false); };
+  const stop=()=>{ try{oscRef.current?.stop();}catch(e){} oscRef.current=null; gRef.current=null; setPlaying(false); setSoloFreq(null); };
 
-  // 무한 재생 (문제 재생용). 다시 부르면 토글 정지.
-  const playLoop=async(freq)=>{
-    if(playing){ stop(); return; }
+  // 지정 주파수를 무한 재생 시작 (항상 새로 시작)
+  const startLoop=async(freq)=>{
+    try{oscRef.current?.stop();}catch(e){} oscRef.current=null;
     const ctx=audio.getCtx();
     if(ctx.state==="suspended") await ctx.resume();
     const osc=ctx.createOscillator();
@@ -397,29 +431,31 @@ function SineTab({addScore, resetScore, audio}) {
     g.gain.linearRampToValueAtTime(0.25,ctx.currentTime+0.05);
     osc.connect(g); g.connect(audio.getMaster());
     osc.start();
-    oscRef.current=osc; setPlaying(true);
+    oscRef.current=osc; gRef.current=g; setPlaying(true);
   };
 
-  // 짧은 미리듣기 (보기 클릭용). 누르면 기존 재생 정지 후 잠깐 들려줌.
-  const preview=async(freq,dur=1.5)=>{
-    stop();
+  // 살아있는 오실레이터 주파수만 부드럽게 변경 (클릭 방지). 재생 중이 아니면 새로 시작.
+  const retune=(freq)=>{
+    if(!oscRef.current){ startLoop(freq); return; }
     const ctx=audio.getCtx();
-    if(ctx.state==="suspended") await ctx.resume();
-    const osc=ctx.createOscillator();
-    const g=ctx.createGain();
-    osc.type="sine"; osc.frequency.value=freq;
-    g.gain.setValueAtTime(0,ctx.currentTime);
-    g.gain.linearRampToValueAtTime(0.25,ctx.currentTime+0.05);
-    g.gain.linearRampToValueAtTime(0,ctx.currentTime+dur-0.05);
-    osc.connect(g); g.connect(audio.getMaster());
-    osc.start(); osc.stop(ctx.currentTime+dur);
-    oscRef.current=osc;
+    try{
+      oscRef.current.frequency.setTargetAtTime(freq, ctx.currentTime, 0.015);
+    }catch(e){ startLoop(freq); }
   };
 
-  const newQ=()=>{
+  // 무한 재생 토글 (문제 재생 버튼용 — 일반 모드)
+  const playLoop=async(freq)=>{
+    if(playing){ stop(); return; }
+    await startLoop(freq);
+  };
+
+  // 새 문제 (일반 모드). autoplay=true면 새 주파수를 바로 재생.
+  const newQ=(autoplay=false)=>{
     stop();
-    setTarget(freqs[Math.floor(Math.random()*freqs.length)]);
+    const f=freqs[weightedFreqIndex(freqs)];
+    setTarget(f);
     setGuess(null); setResult(null);
+    if(autoplay) startLoop(f);
   };
 
   const submit=()=>{
@@ -428,41 +464,65 @@ function SineTab({addScore, resetScore, audio}) {
     const {grade:kind, pts} = freqProximity(gi, ti, freqs.length);
     setResult({kind,target,guess});
     addScore(pts);
+    stop(); // 정답 제출 시 문제 소리 뮤트
   };
 
+  // Solo 모드: "재생" 누르면 1kHz부터, 주파수 선택 시 그 주파수만 솔로(연속 드래그는 retune)
+  const soloPlayDefault=()=>{
+    if(playing){ stop(); return; }
+    const f=1000;
+    setSoloFreq(f); setGuess(f); startLoop(f);
+  };
+  const soloPick=(i)=>{
+    const f=freqs[i];
+    setGuess(f); setSoloFreq(f);
+    if(playing) retune(f); else startLoop(f);
+  };
+
+  // Solo 모드 진입/해제 시: 정지 + 선택 초기화 (기본 무음)
+  useEffect(()=>{ stop(); setGuess(null); setResult(null); },[solo]);
   useEffect(()=>{ return stop; },[]);
-  useEffect(()=>{ resetScore(); newQ(); },[octMode]);
+  useEffect(()=>{ resetScore(); stop(); setGuess(null); setResult(null); if(!solo) newQ(); },[octMode]);
+
+  // 그래프에 표시할 선택 인덱스 (solo: soloFreq / 일반: guess)
+  const shownIdx = solo ? (soloFreq==null?null:freqs.indexOf(soloFreq)) : (guess==null?null:freqs.indexOf(guess));
 
   return (
     <div style={{padding:16}}>
       <div style={S.card}>
-        <div style={S.label}>① 사인파 주파수 맞추기</div>
-        <div style={{fontSize:13,color:"#998",marginBottom:10}}>옥타브 간격 선택 후 재생, 주파수를 맞추세요</div>
+        <div style={S.label}>① 사인파 주파수 {solo?"솔로 청음":"맞추기"}</div>
+        <div style={{fontSize:13,color:"#998",marginBottom:10}}>
+          {solo?"재생을 누르면 1kHz부터 들립니다. 주파수를 선택하면 그 음만 들려요":"옥타브 간격 선택 후 재생, 주파수를 맞추세요"}
+        </div>
         <Segmented
           options={[{value:"oct",label:"1옥타브 (10)"},{value:"third",label:"1/3옥타브 (31)"}]}
           value={octMode} onChange={setOctMode}/>
-        <Btn accent onClick={()=>target&&playLoop(target)} style={{marginTop:4}}>
-          {playing?"■ 재생 정지":"▶ 문제 재생"}
-        </Btn>
+        {solo
+          ? <Btn accent onClick={soloPlayDefault} style={{marginTop:4}}>
+              {playing?"■ 정지":"▶ 재생 (1kHz)"}
+            </Btn>
+          : <Btn accent onClick={()=>target&&playLoop(target)} style={{marginTop:4}}>
+              {playing?"■ 재생 정지":"▶ 문제 재생"}
+            </Btn>}
       </div>
 
       <div style={S.card}>
         <div style={S.label}>주파수 — 그래프 드래그 또는 슬라이더로 선택</div>
-        <FRGraph freqs={freqs} selIdx={guess==null?null:freqs.indexOf(guess)} gain={guess!=null?10:0} q={6}
-          ansIdx={result?freqs.indexOf(result.target):null} bandsOnly
-          onPick={(i)=>{ if(result) return; const f=freqs[i]; setGuess(f); }}
+        <FRGraph freqs={freqs} selIdx={shownIdx} gain={shownIdx!=null?12:0} q={6}
+          ansIdx={(!solo&&result)?freqs.indexOf(result.target):null}
+          onPick={(i)=>{ if(solo){ soloPick(i); } else { if(result) return; setGuess(freqs[i]); } }}
           height={140}/>
-        <FreqSlider freqs={freqs} idx={guess==null?null:freqs.indexOf(guess)}
-          onChange={(i)=>{ if(result) return; const f=freqs[i]; setGuess(f); }}/>
+        <FreqSlider freqs={freqs} idx={shownIdx}
+          onChange={(i)=>{ if(solo){ soloPick(i); } else { if(result) return; setGuess(freqs[i]); } }}/>
         <div style={{fontSize:15,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
-          {guess==null?"대역 미선택":fmtFreq(guess)}
+          {shownIdx==null?"대역 미선택":fmtFreq(freqs[shownIdx])}
         </div>
       </div>
 
-      {!result
+      {!solo&&(!result
         ? <Btn accent onClick={submit} disabled={!guess}>정답 제출</Btn>
-        : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
-      {result&&(
+        : <Btn accent onClick={()=>newQ(true)}>다음 문제 →</Btn>)}
+      {!solo&&result&&(
         <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
           {result.kind==="ok"?`✓ 정답! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:"✗ 오답."}
           {" 정답: "}<strong>{fmtFreq(result.target)}</strong>
@@ -492,7 +552,7 @@ function snapGains(diffKey){
 
 function makeEqQuestion(freqs, diffKey, mode, userQ) {
   // mode: "boost" | "cut" | "all" — 한 문제에 1밴드만
-  const idx = Math.floor(Math.random()*freqs.length);
+  const idx = weightedFreqIndex(freqs); // 60Hz↓/16kHz↑ 확률 1/3
   const gains = snapGains(diffKey);
   const gainAbs = gains[Math.floor(Math.random()*gains.length)];
   const q = diffKey==="extra" ? [1,2,3,5,8][Math.floor(Math.random()*5)] : userQ;
@@ -655,6 +715,7 @@ function EqOptions({bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}) 
 // ② EQ 맞추기 (핑크노이즈 / 음원 소스 스위칭 통합)
 // ════════════════════════════════════════════════════════════════
 function EQTab({addScore, resetScore, audio, sharedFile}) {
+  const solo=useSolo();
   const [source,setSource]=useState("pink"); // pink | music
   const [bandSet,setBandSet]=useState(10);
   const [mode,setMode]=useState("boost");
@@ -664,8 +725,11 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
   const [userIdx,setUserIdx]=useState(null);
   const [userGain,setUserGain]=useState(0);
   const [playing,setPlaying]=useState(false);
+  const [soloIdx,setSoloIdx]=useState(null); // solo 모드: 현재 솔로 중인 밴드
   const [result,setResult]=useState(null);
   const srcRef=useRef(null);
+  const outGainRef=useRef(null);
+  const soloFiltRef=useRef(null); // solo peaking 필터 [peak] (retune용)
   const bufRef=useRef(null); // 핑크노이즈 버퍼
   const wasPlayingRef=useRef(false);
   const posRef=useRef(0);        // 음원 내 현재 재생 위치(초, 절대)
@@ -697,10 +761,12 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
       posRef.current=pos;
     }
     try{srcRef.current?.stop();}catch(e){}srcRef.current=null;setPlaying(false);
+    soloFiltRef.current=null;
     if(sharedFile.playheadRef) sharedFile.playheadRef.current.get=null;
   };
 
-  const play=async(bands)=>{
+  const play=async(bands, opts={})=>{
+    const { solo=false, soloFreq=null, muted=false } = opts;
     stopAudio();
     const ctx=audio.getCtx();
     if(ctx.state==="suspended") await ctx.resume();
@@ -723,18 +789,30 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
       startOffset=posRef.current;
     }
     let prev=src;
-    bands.forEach(({freq,gain,q=3})=>{
-      if(gain===0) return;
-      const f=ctx.createBiquadFilter();
-      f.type="peaking"; f.frequency.value=freq; f.gain.value=gain; f.Q.value=q;
-      prev.connect(f); prev=f;
-    });
-    const g=ctx.createGain(); g.gain.value=source==="pink"?0.5:0.8;
+    if(solo && soloFreq){
+      // 풀레인지 소스 + 선택 주파수에 EQ 적용(부스트/컷). 대역통과 솔로가 아님.
+      const gainAbs = diff==="extra" ? 12 : DIFFICULTY[diff].gainAbs;
+      const g0 = mode==="cut" ? -gainAbs : gainAbs; // all 모드는 부스트로 들려줌
+      const peak=ctx.createBiquadFilter();
+      peak.type="peaking"; peak.frequency.value=soloFreq; peak.gain.value=g0; peak.Q.value=qVal;
+      prev.connect(peak); prev=peak;
+      soloFiltRef.current=[peak];
+    } else {
+      soloFiltRef.current=null;
+      bands.forEach(({freq,gain,q=3})=>{
+        if(gain===0) return;
+        const f=ctx.createBiquadFilter();
+        f.type="peaking"; f.frequency.value=freq; f.gain.value=gain; f.Q.value=q;
+        prev.connect(f); prev=f;
+      });
+    }
+    const g=ctx.createGain();
+    g.gain.value=muted?0:(source==="pink"?0.5:0.8);
     prev.connect(g); g.connect(audio.getMaster());
     if(source==="music") src.start(0, startOffset);
     else src.start();
     startedAtRef.current=ctx.currentTime;
-    srcRef.current=src; setPlaying(true);
+    srcRef.current=src; outGainRef.current=g; setPlaying(true);
     // 음원이면 플레이헤드 위치 계산 함수 등록 (0~1 비율)
     if(source==="music" && file && sharedFile.playheadRef){
       const [ls,le]=loopRange(buffer); const span=le-ls; const dur=buffer.duration;
@@ -752,14 +830,31 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
   const holdStart=()=>{ wasPlayingRef.current=playing; play([{freq:1000,gain:0}]); };
   const holdEnd=()=>{ if(wasPlayingRef.current){ play(qBands); } else { stopAudio(); } };
 
-  const newQ=()=>{
+  // Solo 모드: "재생"=소스(핑크/음원) 그대로. 밴드 선택 시 그 대역만 솔로(선택 바뀌면 전환)
+  const soloPlaySource=()=>{
+    if(playing&&soloIdx==null){ stopAudio(); return; } // 소스 재생 중 → 정지
+    setSoloIdx(null); play([],{}); // 멈춰있거나 솔로 중 → 드라이 소스 재생
+  };
+  const soloBand=(i)=>{
+    setSoloIdx(i);
+    const f=freqs[i];
+    // 이미 솔로 재생 중이면 필터만 retune (연속 드래그 클릭 방지)
+    if(soloFiltRef.current && srcRef.current){
+      const ctx=audio.getCtx();
+      try{ soloFiltRef.current.forEach(bp=>bp.frequency.setTargetAtTime(f,ctx.currentTime,0.015)); }catch(e){ play(qBands,{solo:true,soloFreq:f}); }
+    } else {
+      play(qBands,{solo:true,soloFreq:f});
+    }
+  };
+
+  const newQ=(forcePlay=false)=>{
     if(source==="pink") bufRef.current=null;
     const bands=makeEqQuestion(freqs,diff,mode,qVal);
     setQBands(bands);
-    setUserIdx(null); setUserGain(0);
+    setUserIdx(null); setUserGain(0); setSoloIdx(null);
     setResult(null); stopAudio(); posRef.current=0;
-    // 한 번이라도 재생했으면 새 문제 자동 재생
-    if(hasPlayedRef.current) setTimeout(()=>play(bands),60);
+    // Solo 모드에서는 자동 재생 안 함. 일반 모드만 자동 재생.
+    if(!solo && (forcePlay||hasPlayedRef.current)){ hasPlayedRef.current=true; setTimeout(()=>play(bands),60); }
   };
 
   const submit=()=>{
@@ -780,6 +875,8 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
   };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
+  // Solo 모드 진입/해제 시: 정지 + 선택 초기화
+  useEffect(()=>{ stopAudio(); setSoloIdx(null); setUserIdx(null); setUserGain(0); setResult(null); },[solo]);
   // 난이도/밴드/모드/소스 변경 시: 점수 초기화 + 새 문제
   useEffect(()=>{ resetScore(); hasPlayedRef.current=false; if(ready) newQ(); },[bandSet,mode,diff,source,musicReady]);
   // Q 팩터 변경 시: 새 문제만 (점수 유지)
@@ -802,36 +899,42 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
       {qBands&&ready&&(
         <>
           <div style={S.card}>
-            <Btn accent onClick={togglePlay} style={{marginBottom:8}}>
-              {playing?"■ 재생 정지":"▶ 문제 재생"}
-            </Btn>
-            <HoldButton onStart={holdStart} onEnd={holdEnd}>원본 (누르는 동안)</HoldButton>
+            {solo
+              ? <Btn accent onClick={soloPlaySource} style={{marginBottom:8}}>
+                  {playing&&soloIdx==null?"■ 정지":soloIdx!=null?`🎧 ${fmtFreq(freqs[soloIdx])} ${mode==="cut"?"컷":"부스트"} 적용 중 · 탭하면 원본`:`▶ 재생 (${source==="pink"?"핑크노이즈":"음원"})`}
+                </Btn>
+              : <Btn accent onClick={togglePlay} style={{marginBottom:8}}>
+                  {playing?"■ 재생 정지":"▶ 문제 재생"}
+                </Btn>}
+            {!solo&&<HoldButton onStart={holdStart} onEnd={holdEnd}>원본 (누르는 동안)</HoldButton>}
           </div>
 
           <div style={S.card}>
-            <div style={S.label}>① 주파수 — 그래프 드래그 또는 슬라이더</div>
-            <FRGraph freqs={freqs} selIdx={userIdx} gain={curGain} q={qVal}
-              ansIdx={result?freqs.indexOf(result.answer.freq):null} ansGain={result?result.answer.gain:0}
-              onPick={(i)=>{ if(result) return; setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}
+            <div style={S.label}>{solo?`주파수 — 선택하면 그 대역을 ${mode==="cut"?"컷":"부스트"}한 소리`:"① 주파수 — 그래프 드래그 또는 슬라이더"}</div>
+            <FRGraph freqs={freqs} selIdx={solo?soloIdx:userIdx} gain={solo?(soloIdx!=null?(mode==="cut"?-(diff==="extra"?12:DIFFICULTY[diff].gainAbs):(diff==="extra"?12:DIFFICULTY[diff].gainAbs)):0):curGain} q={qVal}
+              ansIdx={(!solo&&result)?freqs.indexOf(result.answer.freq):null} ansGain={(!solo&&result)?result.answer.gain:0}
+              onPick={(i)=>{ if(solo){ soloBand(i); } else { if(result) return; setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); } }}
               height={150}/>
-            <FreqSlider freqs={freqs} idx={userIdx}
-              onChange={(i)=>{ setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); }}/>
+            <FreqSlider freqs={freqs} idx={solo?soloIdx:userIdx}
+              onChange={(i)=>{ if(solo){ soloBand(i); } else { setUserIdx(i); setUserGain(autoGainOnPick(mode,diff)); } }}/>
             <div style={{fontSize:15,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
-              {userIdx==null?"대역 미선택":`${fmtFreq(freqs[userIdx])}  ${userGain>0?"+":""}${userGain}dB`}
+              {solo
+                ? (soloIdx==null?"대역 미선택":fmtFreq(freqs[soloIdx]))
+                : (userIdx==null?"대역 미선택":`${fmtFreq(freqs[userIdx])}  ${userGain>0?"+":""}${userGain}dB`)}
             </div>
           </div>
 
-          {levelStepsFor(mode,diff)&&(
+          {!solo&&levelStepsFor(mode,diff)&&(
             <div style={S.card}>
               <div style={S.label}>② 레벨 — dB 선택</div>
               <LevelStep value={userGain} onChange={setUserGain} mode={mode} diff={diff}/>
             </div>
           )}
 
-          {!result
+          {!solo&&(!result
             ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
-            : <Btn accent onClick={newQ}>다음 문제 →</Btn>}
-          {result&&(
+            : <Btn accent onClick={()=>newQ(true)}>다음 문제 →</Btn>)}
+          {!solo&&result&&(
             <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
               {result.kind==="ok"?`✓ 정답! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:"✗ 오답."}
               {result.kind!=="ok"&&<span style={{fontSize:13}}> {result.freqExact?"주파수 정확":result.freqNear?"주파수 인접":"주파수 틀림"} · 레벨오차 {result.gainErr}dB</span>}
@@ -851,11 +954,14 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
 // ④ 이펙터 청음 (공유 파일 사용)
 // ════════════════════════════════════════════════════════════════
 function EffectsTab({addScore, resetScore, audio, sharedFile}) {
+  const solo=useSolo();
   const [source,setSource]=useState("pink"); // pink | music
   const [q,setQ]=useState(null);
   const [choices,setChoices]=useState([]);
   const [selected,setSelected]=useState(null);
   const [playing,setPlaying]=useState(false);
+  const [soloList,setSoloList]=useState(false); // solo 모드: 이펙터 목록 표시 여부
+  const [soloFx,setSoloFx]=useState(null);      // solo 모드: 현재 재생 중인 이펙터명
   const srcRef=useRef(null);
   const posRef=useRef(0);
   const startedAtRef=useRef(0);
@@ -1022,7 +1128,7 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
     }
   };
 
-  const newQ=()=>{
+  const newQ=(autoplay=false)=>{
     const item=SOUND_EFFECTS[Math.floor(Math.random()*SOUND_EFFECTS.length)];
     // 정답이 속한 그룹들에서 헷갈리는 오답 우선 추출
     const related=new Set();
@@ -1037,6 +1143,7 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
     const wrong=pool.slice(0,3).map(n=>({name:n}));
     setChoices([item,...wrong].sort(()=>Math.random()-0.5));
     setQ(item); setSelected(null); stopAudio(); posRef.current=0;
+    if(autoplay) playWithEffect(item.name);
   };
 
   const select=(c)=>{ if(selected) return; setSelected(c); addScore(c.name===q.name?1:0); stopAudio(); };
@@ -1047,22 +1154,60 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
   const origStart=()=>{ wasEffectRef.current=playing; playWithEffect(null); };
   const origEnd=()=>{ if(wasEffectRef.current){ playWithEffect(q.name); } else { stopAudio(); } };
 
+  // Solo 모드: "재생"=소스 원본(이펙트 없음) + 이펙터 목록 표시. 이펙터 탭하면 그것만 재생.
+  const soloPlay=()=>{
+    if(playing&&soloFx==null){ stopAudio(); setSoloList(false); return; }
+    setSoloFx(null); setSoloList(true); playWithEffect(null);
+  };
+  const soloPickFx=(name)=>{ setSoloFx(name); playWithEffect(name); };
+
   useEffect(()=>{ return ()=>stopAudio(); },[]);
   // 소스(핑크/음원) 변경 시: 정지 + 점수·문제 초기화
-  useEffect(()=>{ stopAudio(); posRef.current=0; setQ(null); setSelected(null); setChoices([]); resetScore(); },[source]);
+  useEffect(()=>{ stopAudio(); posRef.current=0; setQ(null); setSelected(null); setChoices([]); setSoloFx(null); setSoloList(false); resetScore(); },[source]);
+  // Solo 모드 진입/해제 시: 정지 + 초기화
+  useEffect(()=>{ stopAudio(); posRef.current=0; setSoloFx(null); setSoloList(false); setQ(null); setSelected(null); setChoices([]); },[solo]);
 
   return (
     <div style={{padding:16}}>
       <div style={S.card}>
-        <div style={S.label}>④ 이펙터 청음 맞추기</div>
-        <div style={{fontSize:12,color:"#776",marginBottom:12}}>걸린 이펙터를 듣고 맞추세요. 원본과 비교해보세요.</div>
+        <div style={S.label}>④ 이펙터 {solo?"솔로 청음":"청음 맞추기"}</div>
+        <div style={{fontSize:12,color:"#776",marginBottom:12}}>
+          {solo?"재생을 누르면 이펙터 목록이 나옵니다. 누른 이펙터만 들려요":"걸린 이펙터를 듣고 맞추세요. 원본과 비교해보세요."}
+        </div>
         <Segmented options={[{value:"pink",label:"핑크노이즈"},{value:"music",label:"음원"}]} value={source} onChange={setSource}/>
         {source==="music"&&<div style={{marginTop:10}}><FileUploader sharedFile={sharedFile} audio={audio}/></div>}
-        {srcReady&&<Btn accent onClick={newQ} style={{marginTop:10}}>문제 생성</Btn>}
-        {source==="music"&&!srcReady&&<div style={{fontSize:12,color:"#776",marginTop:8}}>음원을 업로드하면 문제를 생성할 수 있습니다</div>}
+        {!solo&&srcReady&&<Btn accent onClick={newQ} style={{marginTop:10}}>문제 생성</Btn>}
+        {solo&&srcReady&&<Btn accent onClick={soloPlay} style={{marginTop:10}}>
+          {playing&&soloFx==null?"■ 정지":soloFx!=null?`🎧 ${effectLabelShort(soloFx)} 재생 중 · 탭하면 원본`:"▶ 재생 (이펙터 목록 보기)"}
+        </Btn>}
+        {source==="music"&&!srcReady&&<div style={{fontSize:12,color:"#776",marginTop:8}}>음원을 업로드하면 {solo?"청음":"문제를 생성"}할 수 있습니다</div>}
       </div>
 
-      {q&&(
+      {/* Solo 모드: 이펙터 전체 목록 */}
+      {solo&&soloList&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+          {SOUND_EFFECTS.map(fx=>{
+            const active=soloFx===fx.name;
+            return (
+              <button key={fx.name} onClick={()=>soloPickFx(fx.name)} style={{
+                padding:"13px 8px",borderRadius:10,cursor:"pointer",fontSize:12.5,fontFamily:"inherit",
+                textAlign:"center",lineHeight:1.35,transition:"all 0.15s",
+                background:active?AC_DIM:"rgba(255,255,255,0.04)",
+                border:active?"1px solid "+AC:"1px solid rgba(255,255,255,0.08)",
+                color:active?AC:"#ccc",
+              }}>{fx.name}</button>
+            );
+          })}
+        </div>
+      )}
+      {solo&&soloFx&&(()=>{ const m=SOUND_EFFECTS.find(e=>e.name===soloFx); return m?(
+        <div style={{...S.result("ok"),marginTop:0}}>
+          <strong style={{color:AC}}>{m.name}</strong><br/>
+          <span style={{fontSize:13,lineHeight:1.5,color:"#ddd"}}>{m.desc}</span>
+        </div>
+      ):null; })()}
+
+      {!solo&&q&&(
         <>
           <div style={S.card}>
             <Btn accent onClick={toggleEffect} style={{marginBottom:8}}>
@@ -1090,7 +1235,7 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
             })}
           </div>
 
-          {selected&&<Btn accent onClick={newQ}>다음 문제 →</Btn>}
+          {selected&&<Btn accent onClick={()=>newQ(true)}>다음 문제 →</Btn>}
           {selected&&(
             <div style={{...S.result(selected.name===q.name?"ok":"no"),marginTop:12,marginBottom:0}}>
               {selected.name===q.name?`✓ 정답! (+${fmtPt(PER_Q)}점)`:"✗ 오답. 정답: "+q.name}
@@ -1112,6 +1257,7 @@ const FB_TIME = { easy:0, normal:20, hard:10, extra:5 }; // 초, 0=무제한
 const FB_LABEL = { easy:"Easy(무제한)", normal:"Normal(20s)", hard:"Hard(10s)", extra:"X-Hard(5s)" };
 
 function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
+  const solo=useSolo();
   const [source,setSource]=useState("pink"); // pink | music
   const [bandSet,setBandSet]=useState(10);
   const [diff,setDiff]=useState("easy");
@@ -1121,10 +1267,15 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
   const [running,setRunning]=useState(false);
   const [result,setResult]=useState(null);
   const [timeLeft,setTimeLeft]=useState(null);
+  const [soloIdx,setSoloIdx]=useState(null); // solo 모드: 현재 솔로 중 밴드
   const srcRef=useRef(null);
   const bufRef=useRef(null);
+  const peakRef=useRef(null); // 하울링 peaking 필터 (solo retune용)
+  const outGRef=useRef(null); // 하울링 출력 게인 (solo 주파수 변경 시 페이드용)
   const rampRef=useRef(null);
   const timerRef=useRef(null);
+  const soloSrcRef=useRef(null); // 솔로 청취용 별도 소스
+  const wasRunningRef=useRef(false);
 
   const freqs = bandSet===10?EQ_10:EQ_31;
   const file = sharedFile.file;
@@ -1138,7 +1289,7 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
   const stopAudio=()=>{
     clearTimers();
     try{srcRef.current?.stop();}catch(e){}
-    srcRef.current=null; setRunning(false);
+    srcRef.current=null; peakRef.current=null; outGRef.current=null; setRunning(false);
   };
 
   const start=async(freq)=>{
@@ -1162,29 +1313,33 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
     }
     const peak=ctx.createBiquadFilter();
     peak.type="peaking"; peak.frequency.value=freq; peak.Q.value=18; peak.gain.value=0;
+    peakRef.current=peak;
     const bg=ctx.createGain(); bg.gain.value=source==="pink"?0.35:0.55;
     src.connect(bg); bg.connect(peak);
-    const g=ctx.createGain(); g.gain.value=0.5;
+    const g=ctx.createGain();
+    // 페이드 인 (재생 시작 시 툭 끊기지 않게)
+    g.gain.setValueAtTime(0, ctx.currentTime);
+    g.gain.linearRampToValueAtTime(0.5, ctx.currentTime+0.18);
     peak.connect(g); g.connect(audio.getMaster());
+    outGRef.current=g;
     if(source==="music" && file && src.loopStart>0) src.start(0, src.loopStart);
     else src.start();
     srcRef.current=src;
 
-    // 하울링 상승 (최대레벨 +6 → 36dB)
+    // 하울링 상승 (최대레벨 기존 +6dB → 42dB)
     let db=0;
-    rampRef.current=setInterval(()=>{ db+=1.2; if(db>36) db=36; try{peak.gain.value=db;}catch(e){} },120);
+    rampRef.current=setInterval(()=>{ db+=1.2; if(db>42) db=42; try{peak.gain.value=db;}catch(e){} },120);
     setRunning(true);
 
-    // 시간 제한 (easy=무제한)
+    // 시간 제한. 일반 모드: 초과 시 자동 오답. Solo 모드: 그 초 동안만 재생 후 정지(채점 없음).
     const limit=FB_TIME[diff];
     if(limit>0){
       setTimeLeft(limit);
       timerRef.current=setInterval(()=>{
         setTimeLeft(t=>{
-          if(t<=1){ // 시간 초과 → 자동 오답
+          if(t<=1){
             clearTimers(); try{srcRef.current?.stop();}catch(e){} srcRef.current=null; setRunning(false);
-            setResult({kind:"no",answer:target,timeout:true});
-            addScore(0);
+            if(!solo){ setResult({kind:"no",answer:target,timeout:true}); addScore(0); }
             return null;
           }
           return t-1;
@@ -1193,11 +1348,12 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
     } else setTimeLeft(null);
   };
 
-  const newRound=()=>{
-    const f=freqs[Math.floor(Math.random()*freqs.length)];
+  const newRound=(autoplay=false)=>{
+    const f=freqs[weightedFreqIndex(freqs)];
     setTarget(f); setUserIdx(null); setResult(null); setTimeLeft(null);
     if(source==="pink") bufRef.current=null;
     stopAudio();
+    if(autoplay) setTimeout(()=>start(f),60); // 다음 문제 시 하울링 자동 재생
   };
 
   const submit=()=>{
@@ -1208,16 +1364,68 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
     addScore(pts); stopAudio();
   };
 
-  useEffect(()=>{ return ()=>stopAudio(); },[]);
+  // 현재 울리는 주파수(target)를 솔로로 청취 — 누르고 있는 동안만 (하울링 일시정지)
+  const stopSolo=()=>{ try{soloSrcRef.current?.stop();}catch(e){} soloSrcRef.current=null; };
+  const soloStart=async()=>{
+    if(target==null) return;
+    wasRunningRef.current=running;
+    clearTimers(); try{srcRef.current?.stop();}catch(e){} srcRef.current=null; setRunning(false);
+    const ctx=audio.getCtx();
+    if(ctx.state==="suspended") await ctx.resume();
+    let buffer;
+    if(source==="pink"){ if(!bufRef.current) bufRef.current=createPinkNoiseBuffer(ctx); buffer=bufRef.current; }
+    else { if(!musicReady) return; buffer=file.buffer; }
+    const src=ctx.createBufferSource(); src.buffer=buffer; src.loop=true;
+    if(source==="music" && file){
+      const dur=buffer.duration; const ls=(file.loopStart??0)*dur, le=(file.loopEnd??1)*dur;
+      if(le>ls+0.05){ src.loopStart=ls; src.loopEnd=le; }
+    }
+    // 좁은 대역통과 2단으로 해당 주파수만 솔로
+    const bp1=ctx.createBiquadFilter(); bp1.type="bandpass"; bp1.frequency.value=target; bp1.Q.value=8;
+    const bp2=ctx.createBiquadFilter(); bp2.type="bandpass"; bp2.frequency.value=target; bp2.Q.value=8;
+    const g=ctx.createGain(); g.gain.value=1.0;
+    src.connect(bp1); bp1.connect(bp2); bp2.connect(g); g.connect(audio.getMaster());
+    if(source==="music" && file && src.loopStart>0) src.start(0, src.loopStart); else src.start();
+    soloSrcRef.current=src;
+  };
+  const soloEnd=()=>{ stopSolo(); if(wasRunningRef.current) start(target); };
+
+  // Solo 모드: 밴드 선택 시 그 대역 하울링을 재생. 이미 재생 중이면 주파수 변경 + 페이드 인.
+  const soloBand=(i)=>{
+    setSoloIdx(i); setTarget(freqs[i]);
+    const f=freqs[i];
+    if(running && peakRef.current && srcRef.current){
+      const ctx=audio.getCtx(); const now=ctx.currentTime;
+      try{
+        // 출력을 잠깐 줄였다가(0.05s) 새 주파수로 바꾼 뒤 페이드 인(0.18s)
+        if(outGRef.current){
+          const g=outGRef.current.gain;
+          g.cancelScheduledValues(now);
+          g.setValueAtTime(g.value, now);
+          g.linearRampToValueAtTime(0, now+0.05);
+          g.linearRampToValueAtTime(0.5, now+0.05+0.18);
+        }
+        peakRef.current.frequency.setTargetAtTime(f, now+0.05, 0.02);
+      }catch(e){ setTimeout(()=>start(f),0); }
+    } else {
+      setTimeout(()=>start(f),0);
+    }
+  };
+
+  useEffect(()=>{ return ()=>{ stopAudio(); stopSolo(); }; },[]);
+  // Solo 모드 진입/해제 시: 정지 + 초기화
+  useEffect(()=>{ stopAudio(); stopSolo(); setSoloIdx(null); setUserIdx(null); setResult(null); setTimeLeft(null); },[solo]);
   // 밴드/난이도/소스 변경 시 새 라운드 (점수는 수동 초기화만)
-  useEffect(()=>{ resetScore(); if(ready) newRound(); },[bandSet,diff,source,musicReady]);
+  useEffect(()=>{ resetScore(); if(ready && !solo) newRound(); },[bandSet,diff,source,musicReady]);
 
   return (
     <div style={{padding:16}}>
       <div style={S.card}>
         <Segmented options={[{value:"pink",label:"핑크노이즈"},{value:"music",label:"음원"}]} value={source} onChange={setSource}/>
         {source==="music"&&<div style={{marginTop:8}}><FileUploader sharedFile={sharedFile} audio={audio}/></div>}
-        {source==="pink"&&<div style={{fontSize:13,color:"#998",marginTop:6}}>재생하면 특정 대역이 점점 울립니다. 어느 주파수인지 찾으세요</div>}
+        <div style={{fontSize:13,color:"#998",marginTop:6}}>
+          {solo?"대역을 선택하면 그 주파수의 하울링이 재생됩니다":"재생하면 특정 대역이 점점 울립니다. 어느 주파수인지 찾으세요"}
+        </div>
       </div>
 
       {ready&&(<>
@@ -1234,16 +1442,17 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
         {!optHidden&&(<>
           <div style={S.label}>밴드</div>
           <Segmented options={[{value:10,label:"10밴드"},{value:31,label:"31밴드"}]} value={bandSet} onChange={setBandSet}/>
-          <div style={{...S.label,marginTop:10}}>제한시간</div>
+          <div style={{...S.label,marginTop:10}}>{solo?"재생 시간":"제한시간"}</div>
           <Segmented options={[{value:"easy",label:"Easy ∞"},{value:"normal",label:"20s"},{value:"hard",label:"10s"},{value:"extra",label:"5s"}]} value={diff} onChange={setDiff}/>
         </>)}
       </div>
 
+      {!solo&&(
       <div style={S.card}>
         <Btn accent onClick={()=>running?stopAudio():start(target)} style={{marginBottom:8}}>
           {running?"■ 정지":"▶ 하울링 재생"}
         </Btn>
-        <Btn onClick={newRound}>새 라운드 (다른 주파수)</Btn>
+        <HoldButton onStart={soloStart} onEnd={soloEnd}>🎧 현재 주파수 솔로 (누르는 동안)</HoldButton>
         {running&&(
           <div style={{marginTop:8}}>
             <div style={{fontSize:13,color:"#ff6666",fontWeight:"bold",marginBottom:4}}>
@@ -1258,22 +1467,33 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
           </div>
         )}
       </div>
+      )}
+
+      {solo&&running&&(
+        <div style={S.card}>
+          <Btn onClick={()=>{stopAudio();setSoloIdx(null);}} style={{marginBottom:0}}>■ 정지</Btn>
+          <div style={{fontSize:13,color:AC,fontWeight:"bold",marginTop:8}}>
+            ◉ {soloIdx!=null?fmtFreq(freqs[soloIdx]):""} 하울링 재생 중{timeLeft!=null?` · ${timeLeft}초`:""}
+          </div>
+        </div>
+      )}
 
       <div style={S.card}>
-        <div style={S.label}>울리는 대역 — 그래프 드래그 또는 슬라이더</div>
-        <FRGraph freqs={freqs} selIdx={userIdx} gain={userIdx==null?0:12} q={18}
-          ansIdx={result?freqs.indexOf(result.answer):null} ansGain={12}
-          onPick={(i)=>{ if(result) return; setUserIdx(i); }} height={150}/>
-        <FreqSlider freqs={freqs} idx={userIdx} onChange={(i)=>{ if(result) return; setUserIdx(i); }}/>
+        <div style={S.label}>{solo?"대역 선택 — 그 주파수 하울링 재생":"울리는 대역 — 그래프 드래그 또는 슬라이더"}</div>
+        <FRGraph freqs={freqs} selIdx={solo?soloIdx:userIdx} gain={(solo?soloIdx:userIdx)==null?0:12} q={18}
+          ansIdx={(!solo&&result)?freqs.indexOf(result.answer):null} ansGain={12}
+          onPick={(i)=>{ if(solo){ soloBand(i); } else { if(result) return; setUserIdx(i); } }} height={150}/>
+        <FreqSlider freqs={freqs} idx={solo?soloIdx:userIdx}
+          onChange={(i)=>{ if(solo){ soloBand(i); } else { if(result) return; setUserIdx(i); } }}/>
         <div style={{fontSize:15,color:AC,textAlign:"center",marginTop:6,fontWeight:"bold"}}>
-          {userIdx==null?"대역 미선택":fmtFreq(freqs[userIdx])}
+          {(solo?soloIdx:userIdx)==null?"대역 미선택":fmtFreq(freqs[solo?soloIdx:userIdx])}
         </div>
       </div>
 
-      {!result
+      {!solo&&(!result
         ? <Btn accent onClick={submit} disabled={userIdx==null}>정답 제출</Btn>
-        : <Btn accent onClick={newRound}>다음 라운드 →</Btn>}
-      {result&&(
+        : <Btn accent onClick={()=>newRound(true)}>다음 문제 →</Btn>)}
+      {!solo&&result&&(
         <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
           {result.kind==="ok"?`✓ 정확히 맞춤! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:(result.timeout?"✗ 시간 초과!":"✗ 오답.")}
           <div style={{marginTop:6,fontSize:14}}>정답: {fmtFreq(result.answer)}</div>
@@ -1306,6 +1526,7 @@ function WaveformSelector({buffer, loopStart, loopEnd, onChange, playheadRef}) {
   const headRef=useRef(null);
   const peaksRef=useRef(null);
   const dragRef=useRef(null); // "start" | "end" | null
+  const accent=useAccent();
 
   if(!peaksRef.current || peaksRef.current.buf!==buffer){
     peaksRef.current={buf:buffer, peaks:computePeaks(buffer,300)};
@@ -1320,12 +1541,12 @@ function WaveformSelector({buffer, loopStart, loopEnd, onChange, playheadRef}) {
     for(let i=0;i<n;i++){
       const x=i*bw, h=peaks[i]*(H*0.9);
       const inLoop = x>=sX && x<=eX;
-      ctx.fillStyle = inLoop ? AC : "rgba(255,255,255,0.12)";
+      ctx.fillStyle = inLoop ? accent : "rgba(255,255,255,0.12)";
       ctx.fillRect(x, H/2-h/2, Math.max(1,bw-0.5), h);
     }
-    ctx.fillStyle=AC;
+    ctx.fillStyle=accent;
     ctx.fillRect(sX-2,0,4,H); ctx.fillRect(eX-2,0,4,H);
-  },[buffer,loopStart,loopEnd]);
+  },[buffer,loopStart,loopEnd,accent]);
 
   // 플레이헤드 실시간 그리기 (오버레이 캔버스)
   useEffect(()=>{
@@ -1508,6 +1729,7 @@ export default function App() {
   const [masterVol,setMasterVol]=useState(0.8);
   const [muted,setMuted]=useState(false);
   const [volOpen,setVolOpen]=useState(false); // 상단 볼륨바 기본 숨김
+  const [soloMode,setSoloMode]=useState(false); // Solo 모드 (초록 테마 + 선택 주파수 솔로)
   const [file,setFile]=useState(null);
 
   const audio = useMaster(masterVol, muted);
@@ -1566,24 +1788,40 @@ export default function App() {
   const cur = scores[tab];
   const pts = fmtPt(+((cur.ok/MAX_Q)*100).toFixed(2));
 
+  // Solo 모드 팔레트 → CSS 변수로 주입 (canvas는 ThemeCtx로 전달)
+  const pal = soloMode?PALETTE.solo:PALETTE.normal;
+  const cssVars = { "--ac":pal.ac, "--ac-dim":pal.dim, "--ac-border":pal.border, "--ac-soft":pal.soft };
+
   return (
-    <div style={S.page}>
+    <SoloCtx.Provider value={soloMode}>
+    <ThemeCtx.Provider value={pal.ac}>
+    <div style={{...S.page, ...cssVars}}>
       {/* 헤더 */}
       <div style={S.header}>
-        {/* 타이틀 + (볼륨 아이콘 + 스코어) */}
+        {/* 타이틀 + (볼륨/Solo 아이콘 + 스코어) */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{minWidth:0,flex:1,marginRight:12,overflow:"hidden"}}>
-            <div style={{fontSize:10,color:AC,letterSpacing:3,marginBottom:2}}>EAR TRAINING</div>
+            <div style={{fontSize:10,color:AC,letterSpacing:3,marginBottom:2}}>EAR TRAINING{soloMode&&<span style={{color:AC,marginLeft:6,fontWeight:700}}>· SOLO</span>}</div>
             <div style={{fontSize:"clamp(12px,3.4vw,16px)",fontWeight:"bold",letterSpacing:0.3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>LIVE SOUND EAR TRAINER</div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0}}>
-            <button onClick={()=>setVolOpen(v=>!v)} title="마스터 볼륨" style={{
-              width:30,height:30,flexShrink:0,padding:0,fontSize:13,fontFamily:"inherit",
-              borderRadius:6,cursor:"pointer",lineHeight:1,
-              background:volOpen?AC_DIM:"rgba(255,255,255,0.05)",
-              border:volOpen?"1px solid "+AC:(muted?"1px solid #ff3c3c":"1px solid rgba(255,255,255,0.12)"),
-              color:muted?"#ff6666":(volOpen?AC:"#998"),
-            }}>{muted?"🔇":"🔊"}</button>
+          <div style={{display:"flex",alignItems:"stretch",gap:8,flexShrink:0}}>
+            {/* 볼륨 아이콘 + 그 아래 Solo(S) 토글 */}
+            <div style={{display:"flex",flexDirection:"column",gap:6}}>
+              <button onClick={()=>setVolOpen(v=>!v)} title="마스터 볼륨" style={{
+                width:30,height:30,flexShrink:0,padding:0,fontSize:13,fontFamily:"inherit",
+                borderRadius:6,cursor:"pointer",lineHeight:1,
+                background:volOpen?AC_DIM:"rgba(255,255,255,0.05)",
+                border:volOpen?"1px solid "+AC:(muted?"1px solid #ff3c3c":"1px solid rgba(255,255,255,0.12)"),
+                color:muted?"#ff6666":(volOpen?AC:"#998"),
+              }}>{muted?"🔇":"🔊"}</button>
+              <button onClick={()=>setSoloMode(s=>!s)} title="Solo 모드" style={{
+                width:30,height:30,flexShrink:0,padding:0,fontSize:15,fontWeight:800,fontFamily:"inherit",
+                borderRadius:6,cursor:"pointer",lineHeight:1,transition:"all 0.15s",
+                background:soloMode?"#4caf72":"rgba(255,255,255,0.05)",
+                border:soloMode?"1px solid #4caf72":"1px solid rgba(255,255,255,0.12)",
+                color:soloMode?"#0b0f15":"#4caf72",
+              }}>S</button>
+            </div>
             <button onClick={()=>resetScore(tab)} title="눌러서 점수 초기화" style={{
               background:AC_SOFT,border:"1px solid "+AC_BORDER,borderRadius:10,
               padding:"8px 14px",textAlign:"right",minWidth:74,cursor:"pointer",
@@ -1598,7 +1836,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* 볼륨 슬라이더 — 아이콘 누를 때만 펼침 */}
+        {/* 볼륨 슬라이더 — 볼륨 아이콘 누를 때만 펼침 */}
         {volOpen&&(
           <div style={{display:"flex",alignItems:"center",gap:10,marginTop:10}}>
             <button onClick={()=>setMuted(m=>!m)} style={{
@@ -1638,5 +1876,7 @@ export default function App() {
         ))}
       </div>
     </div>
+    </ThemeCtx.Provider>
+    </SoloCtx.Provider>
   );
 }
