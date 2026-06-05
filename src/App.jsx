@@ -24,7 +24,24 @@ const effectLabelShort=(name)=>name.split(" (")[0];
 const SoloCtx = createContext(false);
 const useSolo = ()=>useContext(SoloCtx);
 
-// ─── 청음용 이펙터 ────────────────────────────────────────────────
+// ─── SVG 아이콘 컴포넌트 ──────────────────────────────────────────
+const svgStyle={display:"inline-block",verticalAlign:"middle",flexShrink:0};
+const IcoVolume=({size=18})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><path d="M16 9a5 5 0 0 1 0 6"/><path d="M19.364 18.364a9 9 0 0 0 0-12.728"/></svg>;
+const IcoMute=({size=18})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/></svg>;
+const IcoHeadphones=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>;
+const IcoUpload=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>;
+const IcoCheck=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>;
+const IcoNear=({size=15})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>;
+const IcoX=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>;
+
+// ─── 채점 결과 메시지 (아이콘 + 텍스트) ─────────────────────────
+const row={display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"};
+const GradeMsg=({kind, extra=""})=>{
+  if(kind==="ok")   return <span style={row}><IcoCheck size={15}/><span>(+{fmtPt(PER_Q)}점)</span>{extra}</span>;
+  if(kind==="near") return <span style={row}><IcoNear size={15}/><span>±1칸 (+{fmtPt(PER_Q_NEAR)}점)</span>{extra}</span>;
+  if(kind==="near2")return <span style={row}><IcoNear size={15}/><span>±2칸 (+{fmtPt(PER_Q_NEAR2)}점)</span>{extra}</span>;
+  return <span style={row}><IcoX size={15}/>{extra}</span>;
+};
 // desc: 수단→결과 구조의 메커니즘 한 줄 해설 (명사형 종결)
 const SOUND_EFFECTS = [
   { name: "리버브 (Reverb)", desc:"미세 지연된 다수 반사음 합산을 통한 공간 잔향 형성" },
@@ -353,7 +370,8 @@ const S = {
     };
   },
   seg: (active)=>({
-    flex:1, padding:"11px 4px", fontSize:13, fontFamily:"inherit", borderRadius:6,
+    flex:1, padding:"11px 4px", fontSize:"clamp(10px,2.6vw,13px)", fontFamily:"inherit", borderRadius:6,
+    whiteSpace:"pre-line", lineHeight:1.3,
     background: active?AC_DIM:"rgba(255,255,255,0.04)",
     border: active?"1px solid "+AC:"1px solid rgba(255,255,255,0.08)",
     color: active?AC:"#998", cursor:"pointer", transition:"all 0.1s",
@@ -524,7 +542,7 @@ function SineTab({addScore, resetScore, audio}) {
         : <Btn accent onClick={()=>newQ(true)}>다음 문제 →</Btn>)}
       {!solo&&result&&(
         <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
-          {result.kind==="ok"?`✓ 정답! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:"✗ 오답."}
+          <GradeMsg kind={result.kind}/>
           {" 정답: "}<strong>{fmtFreq(result.target)}</strong>
           {result.kind!=="ok"&&<> | 선택: {fmtFreq(result.guess)}</>}
         </div>
@@ -701,7 +719,7 @@ function EqOptions({bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}) 
         <div style={S.label}>모드</div>
         <Segmented options={[{value:"boost",label:"부스트"},{value:"cut",label:"컷"},{value:"all",label:"All"}]} value={mode} onChange={setMode}/>
         <div style={S.label}>난이도</div>
-        <Segmented options={[{value:"easy",label:"Easy"},{value:"normal",label:"Normal"},{value:"hard",label:"Hard"},{value:"extra",label:"X-Hard"}]} value={diff} onChange={setDiff}/>
+        <Segmented options={[{value:"easy",label:"Easy\n±12dB"},{value:"normal",label:"Normal\n±6dB"},{value:"hard",label:"Hard\n±3dB"},{value:"extra",label:"X-Hard\n±3~12dB"}]} value={diff} onChange={setDiff}/>
         <div style={{...S.label,marginTop:8}}>Q 팩터: <span style={{color:AC}}>{qVal.toFixed(1)}</span></div>
         <input type="range" min={0.5} max={10} step={0.1} value={qVal}
           onChange={e=>setQVal(+e.target.value)}
@@ -901,7 +919,7 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
           <div style={S.card}>
             {solo
               ? <Btn accent onClick={soloPlaySource} style={{marginBottom:8}}>
-                  {playing&&soloIdx==null?"■ 정지":soloIdx!=null?`🎧 ${fmtFreq(freqs[soloIdx])} ${mode==="cut"?"컷":"부스트"} 적용 중 · 탭하면 원본`:`▶ 재생 (${source==="pink"?"핑크노이즈":"음원"})`}
+                  {playing&&soloIdx==null?"■ 정지":soloIdx!=null?<span style={{display:"flex",alignItems:"center",gap:6}}><IcoHeadphones size={14}/>{fmtFreq(freqs[soloIdx])} {mode==="cut"?"컷":"부스트"} 적용 중 · 탭하면 원본</span>:`▶ 재생 (${source==="pink"?"핑크노이즈":"음원"})`}
                 </Btn>
               : <Btn accent onClick={togglePlay} style={{marginBottom:8}}>
                   {playing?"■ 재생 정지":"▶ 문제 재생"}
@@ -936,9 +954,9 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
             : <Btn accent onClick={()=>newQ(true)}>다음 문제 →</Btn>)}
           {!solo&&result&&(
             <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
-              {result.kind==="ok"?`✓ 정답! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:"✗ 오답."}
-              {result.kind!=="ok"&&<span style={{fontSize:13}}> {result.freqExact?"주파수 정확":result.freqNear?"주파수 인접":"주파수 틀림"} · 레벨오차 {result.gainErr}dB</span>}
-              <div style={{marginTop:6,fontSize:14}}>
+              <GradeMsg kind={result.kind}/>
+              {result.kind!=="ok"&&<div style={{fontSize:13,marginTop:6}}>{result.freqExact?"주파수 정확":result.freqNear?"주파수 인접":"주파수 틀림"} · 레벨오차 {result.gainErr}dB</div>}
+              <div style={{fontSize:14,marginTop:6}}>
                 정답: {result.answer.freq>=1000?`${result.answer.freq/1000}kHz`:`${result.answer.freq}Hz`} {result.answer.gain>0?"+":""}{result.answer.gain}dB
               </div>
             </div>
@@ -1178,7 +1196,7 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
         {source==="music"&&<div style={{marginTop:10}}><FileUploader sharedFile={sharedFile} audio={audio}/></div>}
         {!solo&&srcReady&&<Btn accent onClick={newQ} style={{marginTop:10}}>문제 생성</Btn>}
         {solo&&srcReady&&<Btn accent onClick={soloPlay} style={{marginTop:10}}>
-          {playing&&soloFx==null?"■ 정지":soloFx!=null?`🎧 ${effectLabelShort(soloFx)} 재생 중 · 탭하면 원본`:"▶ 재생 (이펙터 목록 보기)"}
+          {playing&&soloFx==null?"■ 정지":soloFx!=null?<span style={{display:"flex",alignItems:"center",gap:6}}><IcoHeadphones size={14}/>{effectLabelShort(soloFx)} 재생 중 · 탭하면 원본</span>:"▶ 재생 (이펙터 목록 보기)"}
         </Btn>}
         {source==="music"&&!srcReady&&<div style={{fontSize:12,color:"#776",marginTop:8}}>음원을 업로드하면 {solo?"청음":"문제를 생성"}할 수 있습니다</div>}
       </div>
@@ -1238,7 +1256,9 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
           {selected&&<Btn accent onClick={()=>newQ(true)}>다음 문제 →</Btn>}
           {selected&&(
             <div style={{...S.result(selected.name===q.name?"ok":"no"),marginTop:12,marginBottom:0}}>
-              {selected.name===q.name?`✓ 정답! (+${fmtPt(PER_Q)}점)`:"✗ 오답. 정답: "+q.name}
+              {selected.name===q.name
+                ?<span style={row}><IcoCheck size={15}/><span>(+{fmtPt(PER_Q)}점)</span></span>
+                :<span style={row}><IcoX size={15}/><span>{q.name}</span></span>}
               <div style={{marginTop:8,paddingTop:8,borderTop:"1px solid rgba(255,255,255,0.12)",fontSize:13,lineHeight:1.5,color:"#ddd"}}>
                 <strong style={{color:AC}}>{q.name}</strong><br/>{q.desc}
               </div>
@@ -1452,7 +1472,7 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
         <Btn accent onClick={()=>running?stopAudio():start(target)} style={{marginBottom:8}}>
           {running?"■ 정지":"▶ 하울링 재생"}
         </Btn>
-        <HoldButton onStart={soloStart} onEnd={soloEnd}>🎧 현재 주파수 솔로 (누르는 동안)</HoldButton>
+        <HoldButton onStart={soloStart} onEnd={soloEnd}><span style={{display:"flex",alignItems:"center",gap:6}}><IcoHeadphones size={14}/> 현재 주파수 솔로 (누르는 동안)</span></HoldButton>
         {running&&(
           <div style={{marginTop:8}}>
             <div style={{fontSize:13,color:"#ff6666",fontWeight:"bold",marginBottom:4}}>
@@ -1495,7 +1515,11 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
         : <Btn accent onClick={()=>newRound(true)}>다음 문제 →</Btn>)}
       {!solo&&result&&(
         <div style={{...S.result(result.kind),marginTop:12,marginBottom:0}}>
-          {result.kind==="ok"?`✓ 정확히 맞춤! (+${fmtPt(PER_Q)}점)`:result.kind==="near"?`△ 근사값 1칸 (+${fmtPt(PER_Q_NEAR)}점)`:result.kind==="near2"?`△ 근사값 2칸 (+${fmtPt(PER_Q_NEAR2)}점)`:(result.timeout?"✗ 시간 초과!":"✗ 오답.")}
+          {result.kind==="ok"?<span style={row}><IcoCheck size={15}/><span>(+{fmtPt(PER_Q)}점)</span></span>
+          :result.kind==="near"?<span style={row}><IcoNear size={15}/><span>±1칸 (+{fmtPt(PER_Q_NEAR)}점)</span></span>
+          :result.kind==="near2"?<span style={row}><IcoNear size={15}/><span>±2칸 (+{fmtPt(PER_Q_NEAR2)}점)</span></span>
+          :result.timeout?<span style={row}><IcoX size={15}/><span>시간 초과</span></span>
+          :<span style={row}><IcoX size={15}/></span>}
           <div style={{marginTop:6,fontSize:14}}>정답: {fmtFreq(result.answer)}</div>
         </div>
       )}
@@ -1653,7 +1677,7 @@ function FileUploader({sharedFile, audio}) {
       {/* 최상단 접기 토글 (파일 있을 때만, 오른쪽 정렬) */}
       {file&&file.buffer&&(
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:waveHidden?0:8}}>
-          {waveHidden?<div style={{fontSize:12,color:AC,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,marginRight:8}}>✓ {file.name}</div>:<div/>}
+          {waveHidden?<div style={{fontSize:12,color:AC,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,marginRight:8}}><IcoCheck size={12}/> {file.name}</div>:<div/>}
           <button onClick={()=>setWaveHidden(h=>!h)} style={{
             fontSize:11,fontFamily:"inherit",padding:"4px 10px",borderRadius:5,cursor:"pointer",flexShrink:0,
             background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.12)",color:"#998",
@@ -1667,7 +1691,7 @@ function FileUploader({sharedFile, audio}) {
           background:AC_SOFT,border:"1px dashed "+AC_BORDER,
           borderRadius:8,cursor:"pointer",fontSize:14,
         }}>
-          📁 음원 업로드 (MP3 / WAV / M4A)
+          <span style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6}}><IcoUpload size={14}/> 음원 업로드 (MP3 / WAV / M4A)</span>
           <input type="file"
             onChange={handleFile} style={{display:"none"}} />
         </label>
@@ -1680,10 +1704,10 @@ function FileUploader({sharedFile, audio}) {
             </div>
           </div>
         )}
-        {file&&file.error&&<div style={{fontSize:13,color:"#ff6666",marginTop:8}}>✗ {file.errMsg||"재생 불가"}. 다른 음원(MP3/WAV)을 써보세요.</div>}
+        {file&&file.error&&<div style={{fontSize:13,color:"#ff6666",marginTop:8}}><IcoX size={13}/> {file.errMsg||"재생 불가"}. 다른 음원(MP3/WAV)을 써보세요.</div>}
         {file&&file.buffer&&(
           <>
-            <div style={{fontSize:13,color:AC,marginTop:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>✓ {file.name}</div>
+            <div style={{fontSize:13,color:AC,marginTop:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}><IcoCheck size={13}/> {file.name}</div>
             <WaveformSelector buffer={file.buffer}
               loopStart={file.loopStart??0} loopEnd={file.loopEnd??1}
               onChange={(s,en)=>setFile({...file,loopStart:s,loopEnd:en})}
@@ -1808,12 +1832,13 @@ export default function App() {
             {/* 볼륨 아이콘 + 그 아래 Solo(S) 토글 */}
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
               <button onClick={()=>setVolOpen(v=>!v)} title="마스터 볼륨" style={{
-                width:30,height:30,flexShrink:0,padding:0,fontSize:13,fontFamily:"inherit",
-                borderRadius:6,cursor:"pointer",lineHeight:1,
+                width:30,height:30,flexShrink:0,padding:0,fontFamily:"inherit",
+                borderRadius:6,cursor:"pointer",
+                display:"flex",alignItems:"center",justifyContent:"center",
                 background:volOpen?AC_DIM:"rgba(255,255,255,0.05)",
                 border:volOpen?"1px solid "+AC:(muted?"1px solid #ff3c3c":"1px solid rgba(255,255,255,0.12)"),
                 color:muted?"#ff6666":(volOpen?AC:"#998"),
-              }}>{muted?"🔇":"🔊"}</button>
+              }}>{muted?<IcoMute size={16}/>:<IcoVolume size={16}/>}</button>
               <button onClick={()=>setSoloMode(s=>!s)} title="Solo 모드" style={{
                 width:30,height:30,flexShrink:0,padding:0,fontSize:15,fontWeight:800,fontFamily:"inherit",
                 borderRadius:6,cursor:"pointer",lineHeight:1,transition:"all 0.15s",
@@ -1844,7 +1869,7 @@ export default function App() {
               background:muted?"rgba(255,60,60,0.15)":"rgba(255,255,255,0.05)",
               border:muted?"1px solid #ff3c3c":"1px solid rgba(255,255,255,0.1)",
               color:muted?"#ff6666":"#998",cursor:"pointer",whiteSpace:"nowrap",
-            }}>{muted?"🔇 MUTE":"🔊"}</button>
+            }}>{muted?<IcoMute size={16}/>:<IcoVolume size={16}/>}</button>
             <input type="range" min={0} max={1} step={0.01} value={masterVol}
               onChange={e=>setMasterVol(+e.target.value)}
               style={{flex:1,accentColor:AC,cursor:"pointer"}} />
