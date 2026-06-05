@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { Analytics } from "@vercel/analytics/react";
 
 // ─── 테마 색상 ─────────────────────────────────────────────────────
 // CSS 변수로 두어, Solo 모드에서 주황↔초록 전환을 루트에서 한 번에 처리.
@@ -1528,7 +1529,7 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
   );
 }
 
-// ════════════════════════════════════════════════════════════════
+// ���═══════════════════════════════════════════════════════════════
 // 공유 파일 업로더 (로딩바 포함)
 // ════════════════════════════════════════════════════════════════
 // 파형 다운샘플 → 피크 배열
@@ -1901,6 +1902,7 @@ export default function App() {
         ))}
       </div>
     </div>
+    <Analytics />
     </ThemeCtx.Provider>
     </SoloCtx.Provider>
   );
