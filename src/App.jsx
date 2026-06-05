@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { Analytics } from '@vercel/analytics/react';
 
 // ─── 테마 색상 ─────────────────────────────────────────────────────
 // CSS 변수로 두어, Solo 모드에서 주황↔초록 전환을 루트에서 한 번에 처리.
@@ -582,7 +583,7 @@ function makeEqQuestion(freqs, diffKey, mode, userQ) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// EQ 입력 그룹 (밴드 수에 따라 3줄 분할)
+// EQ 입력 그룹 (밴드 수��� 따라 3줄 분할)
 // snapVal: 난이도별 게인 절댓값. null이면 X-Hard(슬라이더)
 // mode: boost/cut/all
 // ════════════════════════════════════════════════════════════════
@@ -729,7 +730,7 @@ function EqOptions({bandSet,setBandSet,mode,setMode,diff,setDiff,qVal,setQVal}) 
   );
 }
 
-// ════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════��════════════
 // ② EQ 맞추기 (핑크노이즈 / 음원 소스 스위칭 통합)
 // ════════════════════════════════════════════════════════════════
 function EQTab({addScore, resetScore, audio, sharedFile}) {
@@ -1528,7 +1529,7 @@ function FeedbackTab({addScore, resetScore, audio, sharedFile}) {
   );
 }
 
-// ════════════════════════════════════════════════════════════════
+// ���═══════════════════════════════════════════════════════════════
 // 공유 파일 업로더 (로딩바 포함)
 // ════════════════════════════════════════════════════════════════
 // 파형 다운샘플 → 피크 배열
@@ -1901,6 +1902,7 @@ export default function App() {
         ))}
       </div>
     </div>
+    <Analytics />
     </ThemeCtx.Provider>
     </SoloCtx.Provider>
   );
