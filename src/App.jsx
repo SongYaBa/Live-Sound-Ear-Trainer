@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext } from "react";
+import { Analytics } from "@vercel/analytics/react";
 
 // ─── 테마 색상 ─────────────────────────────────────────────────────
 // CSS 변수로 두어, Solo 모드에서 주황↔초록 전환을 루트에서 한 번에 처리.
@@ -1901,6 +1902,7 @@ export default function App() {
         ))}
       </div>
     </div>
+    <Analytics />
     </ThemeCtx.Provider>
     </SoloCtx.Provider>
   );
