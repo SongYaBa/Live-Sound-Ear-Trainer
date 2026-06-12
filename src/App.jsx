@@ -331,6 +331,8 @@ const S = {
     minHeight:"100vh", background:"#0b0f15", color:"#e8e0d8",
     fontFamily:"'SF Mono','Courier New',monospace", maxWidth:480, margin:"0 auto",
     paddingBottom:96,
+    userSelect:"none", WebkitUserSelect:"none", WebkitTouchCallout:"none",
+    WebkitTapHighlightColor:"transparent", touchAction:"manipulation",
   },
   header: {
     background:"linear-gradient(180deg,"+AC_SOFT+" 0%,transparent 100%)",
