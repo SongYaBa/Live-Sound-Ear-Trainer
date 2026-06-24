@@ -31,6 +31,7 @@ const IcoVolume=({size=18})=><svg style={svgStyle} width={size} height={size} vi
 const IcoMute=({size=18})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298z"/><line x1="22" x2="16" y1="9" y2="15"/><line x1="16" x2="22" y1="9" y2="15"/></svg>;
 const IcoHeadphones=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3"/></svg>;
 const IcoUpload=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>;
+const IcoLoop=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m2 9 3-3 3 3"/><path d="M13 18H7a2 2 0 0 1-2-2V6"/><path d="m22 15-3 3-3-3"/><path d="M11 6h6a2 2 0 0 1 2 2v10"/></svg>;
 const IcoCheck=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>;
 const IcoNear=({size=15})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></svg>;
 const IcoX=({size=14})=><svg style={svgStyle} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>;
@@ -414,12 +415,23 @@ function useMaster(masterVol, muted) {
   };
   const getCtx = () => ensure().ctx;
   const getMaster = () => ensure().master;
+  // iOS Safari는 백그라운드 복귀 시 resume()만으론 안 풀리는 경우가 있어,
+  // 무음 버퍼를 실제로 재생시켜 오디오 그래프를 강제로 재가동시킨다.
+  const forceWake = async () => {
+    const { ctx } = ensure();
+    try{
+      if(ctx.state!=="running") await ctx.resume();
+      const s = ctx.createBufferSource();
+      s.buffer = ctx.createBuffer(1,1,ctx.sampleRate);
+      s.connect(ctx.destination); s.start(0);
+    }catch(e){}
+  };
   useEffect(()=>{
     if(masterRef.current){
       masterRef.current.gain.value = muted ? 0 : masterVol;
     }
   },[masterVol,muted]);
-  return { getCtx, getMaster, masterVol, muted };
+  return { getCtx, getMaster, masterVol, muted, forceWake };
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -873,9 +885,12 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
     const bands=makeEqQuestion(freqs,diff,mode,qVal);
     setQBands(bands);
     setUserIdx(null); setUserGain(0); setSoloIdx(null);
-    setResult(null); stopAudio(); posRef.current=0;
+    setResult(null);
+    const keepGoing = source==="music" && sharedFile.continuePlay;
+    if(!keepGoing){ stopAudio(); posRef.current=0; } // 이어재생 OFF면 정지 + 처음으로
+    // 이어재생 ON: 멈추지 않고 새 밴드로 바로 갈아탐 (재생 위치는 유지됨)
     // Solo 모드에서는 자동 재생 안 함. 일반 모드만 자동 재생.
-    if(!solo && (forcePlay||hasPlayedRef.current)){ hasPlayedRef.current=true; setTimeout(()=>play(bands),60); }
+    if(!solo && (keepGoing||forcePlay||hasPlayedRef.current)){ hasPlayedRef.current=true; setTimeout(()=>play(bands),keepGoing?0:60); }
   };
 
   const submit=()=>{
@@ -892,7 +907,8 @@ function EQTab({addScore, resetScore, audio, sharedFile}) {
     else if(freqNear&&gainErr<=gainTol){ kind=fp.grade; pts=fp.pts; } // near 또는 near2
     else { kind="no"; pts=0; }
     setResult({kind,freqExact,freqNear,gainErr,answer:ans});
-    addScore(pts); stopAudio();
+    addScore(pts);
+    if(!(source==="music" && sharedFile.continuePlay)) stopAudio();
   };
 
   useEffect(()=>{ return ()=>stopAudio(); },[]);
@@ -1163,11 +1179,13 @@ function EffectsTab({addScore, resetScore, audio, sharedFile}) {
     }
     const wrong=pool.slice(0,3).map(n=>({name:n}));
     setChoices([item,...wrong].sort(()=>Math.random()-0.5));
-    setQ(item); setSelected(null); stopAudio(); posRef.current=0;
-    if(autoplay) playWithEffect(item.name);
+    setQ(item); setSelected(null);
+    const keepGoing = source==="music" && sharedFile.continuePlay;
+    if(!keepGoing){ stopAudio(); posRef.current=0; } // 이어재생 OFF면 정지 + 처음으로
+    if(keepGoing||autoplay) playWithEffect(item.name);
   };
 
-  const select=(c)=>{ if(selected) return; setSelected(c); addScore(c.name===q.name?1:0); stopAudio(); };
+  const select=(c)=>{ if(selected) return; setSelected(c); addScore(c.name===q.name?1:0); if(!(source==="music" && sharedFile.continuePlay)) stopAudio(); };
 
   // 이펙터 소리 토글
   const toggleEffect=()=>{ if(playing) stopAudio(); else playWithEffect(q.name); };
@@ -1548,7 +1566,7 @@ function computePeaks(buffer, n=300){
 }
 
 // 파형 + 구간 선택 (좌/우 핸들 드래그) + 실시간 플레이헤드
-function WaveformSelector({buffer, loopStart, loopEnd, onChange, playheadRef}) {
+function WaveformSelector({buffer, loopStart, loopEnd, onChange, playheadRef, continuePlay, onToggleLoop}) {
   const ref=useRef(null);
   const headRef=useRef(null);
   const peaksRef=useRef(null);
@@ -1628,12 +1646,22 @@ function WaveformSelector({buffer, loopStart, loopEnd, onChange, playheadRef}) {
           display:"block",touchAction:"none",cursor:"ew-resize"}} />
       <canvas ref={headRef} width={600} height={70}
         style={{width:"100%",height:70,position:"absolute",top:0,left:0,pointerEvents:"none"}} />
+      {onToggleLoop&&(
+        <button onClick={onToggleLoop} title="이어재생 (문제 전환해도 음원 끊기지 않음)" style={{
+          position:"absolute",right:6,bottom:6,width:26,height:26,padding:0,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          borderRadius:6,cursor:"pointer",
+          background:continuePlay?AC:"rgba(0,0,0,0.45)",
+          border:continuePlay?"1px solid "+AC:"1px solid rgba(255,255,255,0.15)",
+          color:continuePlay?"#1a1208":"#aaa",
+        }}><IcoLoop size={14}/></button>
+      )}
     </div>
   );
 }
 
 function FileUploader({sharedFile, audio}) {
-  const {file,setFile}=sharedFile;
+  const {file,setFile,continuePlay,setContinuePlay}=sharedFile;
   const [progress,setProgress]=useState(0);
   const [waveHidden,setWaveHidden]=useState(false);
 
@@ -1714,8 +1742,8 @@ function FileUploader({sharedFile, audio}) {
             <WaveformSelector buffer={file.buffer}
               loopStart={file.loopStart??0} loopEnd={file.loopEnd??1}
               onChange={(s,en)=>setFile({...file,loopStart:s,loopEnd:en})}
-              playheadRef={sharedFile.playheadRef}/>
-            <div style={{fontSize:11,color:"#776",marginTop:4}}>주황 구간만 반복 재생됩니다 · 좌우 핸들 드래그로 구간 조절</div>
+              playheadRef={sharedFile.playheadRef}
+              continuePlay={continuePlay} onToggleLoop={()=>setContinuePlay(c=>!c)}/>
           </>
         )}
         {!file&&<div style={{fontSize:12,color:"#554",marginTop:8}}>저작권 없는 음원을 사용하세요</div>}
@@ -1758,10 +1786,11 @@ export default function App() {
   const [volOpen,setVolOpen]=useState(false); // 상단 볼륨바 기본 숨김
   const [soloMode,setSoloMode]=useState(false); // Solo 모드 (초록 테마 + 선택 주파수 솔로)
   const [file,setFile]=useState(null);
+  const [continuePlay,setContinuePlay]=useState(false); // 음원 이어재생(문제 전환 시 처음으로 안 돌아감)
 
   const audio = useMaster(masterVol, muted);
   const playheadRef = useRef({get:null}); // 현재 재생위치(0~1) 반환 함수 등록용
-  const sharedFile={file,setFile,playheadRef};
+  const sharedFile={file,setFile,playheadRef,continuePlay,setContinuePlay};
 
   // iOS: 첫 사용자 입력(터치/클릭)에서 AudioContext를 깨워둔다
   useEffect(()=>{
@@ -1783,22 +1812,20 @@ export default function App() {
   },[]);
 
   // 탭 전환/복귀 시 AudioContext가 suspend 되어 소리가 끊기는 버그 방지.
-  // 화면 복귀 또는 창 포커스 시 컨텍스트를 다시 깨운다. (점수는 건드리지 않음)
+  // iOS Safari는 백그라운드를 오래 두면 resume()만으론 안 풀리는 경우가 있어
+  // 무음 버퍼를 실제로 재생시키는 forceWake로 강하게 깨운다. (점수는 건드리지 않음)
   useEffect(()=>{
-    const resume=()=>{
-      try{
-        const ctx=audio.getCtx();
-        if(ctx&&ctx.state==="suspended") ctx.resume();
-      }catch(e){}
-    };
-    const onVis=()=>{ if(document.visibilityState==="visible") resume(); };
+    const onVis=()=>{ if(document.visibilityState==="visible") audio.forceWake(); };
     document.addEventListener("visibilitychange",onVis);
-    window.addEventListener("focus",resume);
-    window.addEventListener("pageshow",resume);
+    window.addEventListener("focus",audio.forceWake);
+    window.addEventListener("pageshow",audio.forceWake);
+    // 화면을 다시 터치/탭하는 순간에도 한 번 더 깨운다 (가장 확실한 트리거)
+    document.addEventListener("touchstart",audio.forceWake,{passive:true});
     return ()=>{
       document.removeEventListener("visibilitychange",onVis);
-      window.removeEventListener("focus",resume);
-      window.removeEventListener("pageshow",resume);
+      window.removeEventListener("focus",audio.forceWake);
+      window.removeEventListener("pageshow",audio.forceWake);
+      document.removeEventListener("touchstart",audio.forceWake);
     };
   },[]);
 
